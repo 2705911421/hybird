@@ -1,0 +1,100 @@
+{
+  "project": {
+    "project_id": "lighthouse-fixture",
+    "revision": 7,
+    "phase": "drafting",
+    "latest_chapter": 3
+  },
+  "entities": [
+    {
+      "entity_id": "char-lin",
+      "entity_type": "character",
+      "canonical_name": "Lin Yue",
+      "aliases": ["Keeper Lin"],
+      "attributes": {"role": "lighthouse keeper", "location": "North Harbor", "status": "active"},
+      "history": [{"revision": 3, "change": "accepted the night watch"}]
+    },
+    {
+      "entity_id": "char-ren",
+      "entity_type": "character",
+      "canonical_name": "Ren Kai",
+      "aliases": ["Captain Ren"],
+      "attributes": {"role": "ferry captain", "location": "North Harbor", "status": "missing"},
+      "history": [{"revision": 5, "change": "ferry failed to return"}]
+    }
+  ],
+  "relationships": [
+    {
+      "relationship_id": "rel-lin-ren",
+      "source_entity_id": "char-lin",
+      "target_entity_id": "char-ren",
+      "relationship_type": "siblings",
+      "attributes": {"trust": "strained", "last_contact_chapter": 2}
+    }
+  ],
+  "events": [
+    {
+      "event_id": "evt-beacon-failed",
+      "event_type": "beacon.failed",
+      "subject": "lighthouse",
+      "chapter_number": 2,
+      "payload": {"cause": "missing brass key", "duration_minutes": 11},
+      "evidence": [{"chapter": 2, "span": "the lamp went dark"}],
+      "confidence": 1.0
+    },
+    {
+      "event_id": "evt-ferry-missing",
+      "event_type": "ferry.missing",
+      "subject": "char-ren",
+      "chapter_number": 3,
+      "payload": {"route": "North Harbor to Glass Isle"},
+      "evidence": [{"chapter": 3, "span": "the third bell passed"}],
+      "confidence": 1.0
+    }
+  ],
+  "timeline": [
+    {
+      "timeline_id": "time-002-beacon",
+      "sequence_key": "night-002.01",
+      "title": "Beacon outage",
+      "event_id": "evt-beacon-failed",
+      "details": {"chapter": 2, "before": "ferry departure"}
+    },
+    {
+      "timeline_id": "time-003-ferry",
+      "sequence_key": "night-003.02",
+      "title": "Ferry declared missing",
+      "event_id": "evt-ferry-missing",
+      "details": {"chapter": 3, "after": "third bell"}
+    }
+  ],
+  "narrative_threads": [
+    {
+      "thread_id": "thread-brass-key",
+      "title": "The missing brass key",
+      "status": "open",
+      "introduced_chapter": 1,
+      "resolved_chapter": null,
+      "details": {"promise": "identify who removed the key", "target_chapter": 8}
+    }
+  ],
+  "chapter_summaries": [
+    {"chapter_number": 1, "title": "The Keeper", "summary": "Lin Yue takes the North Harbor night watch and finds the brass key cabinet empty."},
+    {"chapter_number": 2, "title": "Eleven Dark Minutes", "summary": "The beacon fails for eleven minutes while Ren Kai's ferry leaves for Glass Isle."},
+    {"chapter_number": 3, "title": "After the Third Bell", "summary": "Ren Kai's ferry does not return, and Lin connects the disappearance to the missing key."}
+  ],
+  "facts": [
+    {"fact_id": "fact-character-lin", "subject": "char-lin", "predicate": "character.profile", "value": {"name": "Lin Yue", "role": "lighthouse keeper", "status": "active"}, "valid_from_revision": 1},
+    {"fact_id": "fact-character-ren", "subject": "char-ren", "predicate": "character.profile", "value": {"name": "Ren Kai", "role": "ferry captain", "status": "missing"}, "valid_from_revision": 5},
+    {"fact_id": "fact-relationship-lin-ren", "subject": "char-lin", "predicate": "relationship.siblings", "value": {"target": "char-ren", "trust": "strained"}, "valid_from_revision": 2},
+    {"fact_id": "fact-event-beacon", "subject": "lighthouse", "predicate": "event.beacon_failed", "value": {"event_id": "evt-beacon-failed", "duration_minutes": 11}, "valid_from_revision": 4},
+    {"fact_id": "fact-timeline-ferry", "subject": "timeline", "predicate": "timeline.sequence", "value": {"before": "evt-beacon-failed", "after": "evt-ferry-missing"}, "valid_from_revision": 6},
+    {"fact_id": "fact-thread-key", "subject": "thread-brass-key", "predicate": "narrative_thread.open", "value": {"title": "The missing brass key", "target_chapter": 8}, "valid_from_revision": 1},
+    {"fact_id": "fact-summary-003", "subject": "chapter-3", "predicate": "chapter.summary", "value": {"title": "After the Third Bell", "summary": "Ren Kai's ferry does not return."}, "valid_from_revision": 7}
+  ],
+  "retrieval_documents": [
+    {"source_id": "chapter-1-scene-2", "source_type": "chapter_scene", "chapter_number": 1, "text": "Salt had greened the empty brass key hook inside the North Harbor lighthouse."},
+    {"source_id": "chapter-2-scene-4", "source_type": "chapter_scene", "chapter_number": 2, "text": "For eleven minutes the harbor beacon was dark, and the Glass Isle ferry crossed without its light."},
+    {"source_id": "chapter-3-summary", "source_type": "chapter_summary", "chapter_number": 3, "text": "After the third bell, Lin Yue recorded Ren Kai's ferry as missing and circled the brass key in her log."}
+  ]
+}

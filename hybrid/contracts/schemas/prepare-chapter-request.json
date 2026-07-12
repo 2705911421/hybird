@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/prepare-chapter-request.json",
+  "title": "PrepareChapterRequest",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["chapter_number", "intent", "base_context_revision"],
+      "properties": {
+        "chapter_number": {"type": "integer", "minimum": 1},
+        "intent": {"type": "object"},
+        "base_context_revision": {"type": "integer", "minimum": 0},
+        "expires_in_seconds": {"type": "integer", "minimum": 60, "maximum": 86400, "default": 3600}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

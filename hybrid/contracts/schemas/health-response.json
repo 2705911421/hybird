@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/health-response.json",
+  "title": "HealthResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "runtime_version", "schema_versions", "database"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "degraded", "unavailable"]},
+    "runtime_version": {"type": "string"},
+    "schema_versions": {"type": "array", "items": {"type": "string"}},
+    "database": {"type": "string", "enum": ["ready", "locked", "migration_required", "unavailable"]}
+  }
+}

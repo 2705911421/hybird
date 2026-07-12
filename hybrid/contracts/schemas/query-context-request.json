@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/query-context-request.json",
+  "title": "QueryContextRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "project_id", "schema_version", "chapter_number", "intent", "budget"],
+  "properties": {
+    "request_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "schema_version": {"type": "string", "const": "story-runtime/v1"},
+    "chapter_number": {"type": "integer", "minimum": 1},
+    "intent": {"type": "string", "minLength": 1, "maxLength": 10000},
+    "entity_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_tokens", "max_items"],
+      "properties": {
+        "max_tokens": {"type": "integer", "minimum": 256, "maximum": 100000},
+        "max_items": {"type": "integer", "minimum": 1, "maximum": 500}
+      }
+    },
+    "include_retrieval_candidates": {"type": "boolean", "default": true}
+  }
+}

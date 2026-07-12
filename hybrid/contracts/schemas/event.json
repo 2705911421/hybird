@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/event.json",
+  "title": "StoryEventInput",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "event_type", "subject", "payload", "evidence"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 8, "maxLength": 160},
+    "event_type": {"type": "string", "minLength": 1, "maxLength": 100},
+    "subject": {"type": "string", "minLength": 1, "maxLength": 200},
+    "payload": {"type": "object"},
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_id", "start", "end"],
+        "properties": {
+          "artifact_id": {"type": "string", "minLength": 1},
+          "start": {"type": "integer", "minimum": 0},
+          "end": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1}
+  }
+}

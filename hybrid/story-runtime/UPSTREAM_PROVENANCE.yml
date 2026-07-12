@@ -1,0 +1,74 @@
+format_version: 1
+phase: 1
+generated_for: hybrid-story-runtime-0.1.0
+distribution_license: AGPL-3.0-only
+legal_status: "Provisional per ADR-008; maintainer/legal confirmation remains required before distribution."
+
+upstreams:
+  webnovel_writer:
+    repository: https://github.com/lingfengQAQ/webnovel-writer.git
+    commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    license: GPL-3.0
+  inkos:
+    repository: https://github.com/Narcooo/inkos.git
+    commit: fd87b04c3fbac7ab6ebc1b022fa117ee8051825e
+    license: AGPL-3.0-only
+
+entries:
+  - target_paths:
+      - src/story_runtime/contracts.py
+    upstream_repository: webnovel_writer
+    original_paths:
+      - webnovel-writer/scripts/data_modules/story_contract_schema.py
+      - webnovel-writer/scripts/data_modules/story_event_schema.py
+      - webnovel-writer/scripts/data_modules/chapter_commit_schema.py
+    original_commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    original_license: GPL-3.0
+    modifications: "Clean reimplementation as Pydantic v2 DTOs from the approved Hybrid JSON Schemas; no source block copied. Claude/plugin arguments removed."
+  - target_paths:
+      - src/story_runtime/database.py
+      - src/story_runtime/migrations.py
+      - src/story_runtime/repository.py
+    upstream_repository: webnovel_writer
+    original_paths:
+      - webnovel-writer/scripts/data_modules/event_log_store.py
+      - webnovel-writer/scripts/data_modules/migrate_state_to_sqlite.py
+      - webnovel-writer/scripts/data_modules/projections.py
+    original_commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    original_license: GPL-3.0
+    modifications: "Clean transactional redesign: SQLite is authority rather than mirror; added repository boundary, checksummed migrations, WAL/busy timeout, aggregate idempotency, projection recovery, and explicit connection close. No source block copied."
+  - target_paths:
+      - src/story_runtime/services.py
+    upstream_repository: webnovel_writer
+    original_paths:
+      - webnovel-writer/scripts/data_modules/project_phase.py
+      - webnovel-writer/scripts/data_modules/project_status.py
+      - webnovel-writer/scripts/data_modules/doctor.py
+      - webnovel-writer/scripts/data_modules/rag_adapter.py
+    original_commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    original_license: GPL-3.0
+    modifications: "Clean service-layer rewrite with exact-query precedence and deterministic local lexical retrieval; removed external embedding/rerank calls and all Claude home/plugin configuration."
+  - target_paths:
+      - src/story_runtime/api.py
+      - src/story_runtime/cli.py
+      - scripts/start-runtime.cmd
+      - scripts/start-runtime.ps1
+      - scripts/start-runtime.sh
+    upstream_repository: webnovel_writer
+    original_paths:
+      - webnovel-writer/scripts/webnovel.py
+      - webnovel-writer/scripts/data_modules/story_runtime_health.py
+    original_commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    original_license: GPL-3.0
+    modifications: "New standalone FastAPI/CLI host. No Claude Code hooks, skills parser, dashboard, or plugin-install path retained. All Phase 1 HTTP writes are closed."
+  - target_paths:
+      - fixtures/lighthouse-project.json
+      - tests/
+      - README.md
+      - KNOWN_DIFFERENCES.md
+      - BASELINE_PERFORMANCE.md
+    upstream_repository: none
+    original_paths: []
+    original_commit: none
+    original_license: none
+    modifications: "Original deterministic Phase 1 fixture, verification, and documentation assets."

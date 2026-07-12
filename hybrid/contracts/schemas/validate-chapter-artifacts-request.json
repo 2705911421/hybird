@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/validate-chapter-artifacts-request.json",
+  "title": "ValidateChapterArtifactsRequest",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["prepare_id", "artifacts"],
+      "properties": {
+        "prepare_id": {"type": "string", "format": "uuid"},
+        "artifacts": {"$ref": "chapter-artifacts.json"},
+        "validation_profile": {"type": "string", "default": "strict"}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/project-status-response.json",
+  "title": "ProjectStatusResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project_id", "revision", "phase", "latest_chapter", "projection_health", "schema_version"],
+  "properties": {
+    "project_id": {"type": "string"},
+    "revision": {"type": "integer", "minimum": 0},
+    "phase": {"type": "string"},
+    "latest_chapter": {"type": "integer", "minimum": 0},
+    "projection_health": {"type": "object", "additionalProperties": {"type": "string"}},
+    "schema_version": {"type": "string"},
+    "active_prepare_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}}
+  }
+}

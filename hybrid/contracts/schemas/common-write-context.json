@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/common-write-context.json",
+  "title": "CommonWriteContext",
+  "type": "object",
+  "required": ["request_id", "idempotency_key", "project_id", "schema_version", "expected_revision"],
+  "properties": {
+    "request_id": {"type": "string", "format": "uuid"},
+    "idempotency_key": {"type": "string", "minLength": 8, "maxLength": 200, "pattern": "^[A-Za-z0-9._:-]+$"},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+    "schema_version": {"type": "string", "const": "story-runtime/v1"},
+    "expected_revision": {"type": "integer", "minimum": 0}
+  }
+}

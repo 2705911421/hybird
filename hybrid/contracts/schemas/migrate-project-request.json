@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/migrate-project-request.json",
+  "title": "MigrateProjectRequest",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["source_kind", "source_path", "target_schema_version", "dry_run"],
+      "properties": {
+        "source_kind": {"type": "string", "enum": ["inkos-1.7", "webnovel-writer-6.2", "story-runtime-snapshot"]},
+        "source_path": {"type": "string", "minLength": 1},
+        "target_schema_version": {"type": "string", "const": "story-runtime/v1"},
+        "dry_run": {"type": "boolean"},
+        "resume_job_id": {"type": ["string", "null"], "format": "uuid"}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

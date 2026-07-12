@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/commit-chapter-request.json",
+  "title": "CommitChapterRequest",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["prepare_id", "validation_token", "artifacts"],
+      "properties": {
+        "prepare_id": {"type": "string", "format": "uuid"},
+        "validation_token": {"type": "string", "minLength": 16, "maxLength": 500},
+        "artifacts": {"$ref": "chapter-artifacts.json"}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

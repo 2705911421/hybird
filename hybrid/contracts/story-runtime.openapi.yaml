@@ -1,0 +1,356 @@
+openapi: 3.1.0
+info:
+  title: Hybrid Story Runtime API
+  version: 0.1.0-draft
+  description: >-
+    Versioned boundary between InkOS TypeScript application services and the
+    Python Story Runtime. The runtime is the only writer of authoritative
+    long-form story state. This draft is not an implementation commitment.
+servers:
+  - url: http://127.0.0.1:{port}/api/story-runtime/v1
+    variables:
+      port:
+        default: "47831"
+security:
+  - LocalBearer: []
+tags:
+  - name: System
+  - name: Query
+  - name: Chapter
+  - name: Events
+  - name: Operations
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Runtime health
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/health-response.json
+
+  /projects/{project_id}/status:
+    get:
+      tags: [System]
+      operationId: getProjectStatus
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Revision and projection status
+          content:
+            application/json:
+              schema:
+                $ref: ./schemas/project-status-response.json
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /queries/context:
+    post:
+      tags: [Query]
+      operationId: queryContext
+      description: Read-only context selection; does not mutate authority.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/query-context-request.json
+      responses:
+        "200":
+          description: Governed context package
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextQueryResult"
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/entities/{entity_id}:
+    get:
+      tags: [Query]
+      operationId: queryEntity
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: entity_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 200 }
+        - name: at_revision
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0 }
+        - name: include_history
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Authoritative entity view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityResult"
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /chapters/prepare:
+    post:
+      tags: [Chapter]
+      operationId: prepareChapter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/prepare-chapter-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /chapters/validate:
+    post:
+      tags: [Chapter]
+      operationId: validateChapterArtifacts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/validate-chapter-artifacts-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /chapters/commit:
+    post:
+      tags: [Chapter]
+      operationId: commitChapter
+      description: >-
+        Atomically persists chapter metadata, appends events, updates core
+        projections, verifies invariants, advances revision, and writes outbox.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/commit-chapter-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /events/append:
+    post:
+      tags: [Events]
+      operationId: appendEvents
+      description: Restricted administrative/domain command; agents cannot call it directly.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/append-events-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projections/replay:
+    post:
+      tags: [Operations]
+      operationId: replayProjections
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/replay-projections-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/doctor:
+    get:
+      tags: [System]
+      operationId: doctorProject
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: deep
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Read-only consistency report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorResult"
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/migrate:
+    post:
+      tags: [Operations]
+      operationId: migrateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/migrate-project-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/export-snapshot:
+    post:
+      tags: [Operations]
+      operationId: exportSnapshot
+      description: Writes a revision-bound export artifact; does not mutate story facts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/export-snapshot-request.json
+      responses:
+        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+components:
+  securitySchemes:
+    LocalBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-local-token
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._-]+$"
+  responses:
+    OperationCompleted:
+      description: Operation result; replayed=true means an idempotent retry.
+      content:
+        application/json:
+          schema:
+            $ref: ./schemas/operation-result.json
+    RevisionConflict:
+      description: expected_revision does not match current project revision.
+      content:
+        application/json:
+          schema:
+            $ref: ./schemas/error-response.json
+    ValidationError:
+      description: Schema, evidence, policy, or domain validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: ./schemas/error-response.json
+    NotFound:
+      description: Project or entity not found.
+      content:
+        application/json:
+          schema:
+            $ref: ./schemas/error-response.json
+    Forbidden:
+      description: Caller lacks the required command scope.
+      content:
+        application/json:
+          schema:
+            $ref: ./schemas/error-response.json
+  schemas:
+    ContextQueryResult:
+      type: object
+      additionalProperties: false
+      required: [request_id, project_id, revision, authoritative_facts, retrieval_candidates, untrusted_materials, trace]
+      properties:
+        request_id: { type: string, format: uuid }
+        project_id: { type: string }
+        revision: { type: integer, minimum: 0 }
+        authoritative_facts:
+          type: array
+          items:
+            type: object
+            required: [fact_id, subject, predicate, value, valid_from_revision]
+            properties:
+              fact_id: { type: string }
+              subject: { type: string }
+              predicate: { type: string }
+              value: {}
+              valid_from_revision: { type: integer, minimum: 0 }
+              valid_to_revision: { type: [integer, "null"], minimum: 0 }
+        retrieval_candidates:
+          type: array
+          items:
+            type: object
+            required: [source_id, text, score, trust]
+            properties:
+              source_id: { type: string }
+              text: { type: string }
+              score: { type: number }
+              trust: { type: string, const: untrusted_content }
+        untrusted_materials:
+          type: array
+          items: { type: object }
+        trace:
+          type: object
+          required: [budget_used, selected_source_ids]
+          properties:
+            budget_used: { type: integer, minimum: 0 }
+            selected_source_ids: { type: array, items: { type: string } }
+    EntityResult:
+      type: object
+      additionalProperties: false
+      required: [project_id, revision, entity]
+      properties:
+        project_id: { type: string }
+        revision: { type: integer, minimum: 0 }
+        entity:
+          type: object
+          required: [entity_id, entity_type, canonical_name, attributes]
+          properties:
+            entity_id: { type: string }
+            entity_type: { type: string }
+            canonical_name: { type: string }
+            aliases: { type: array, items: { type: string } }
+            attributes: { type: object }
+            history: { type: array, items: { type: object } }
+    DoctorResult:
+      type: object
+      additionalProperties: false
+      required: [project_id, revision, status, checks]
+      properties:
+        project_id: { type: string }
+        revision: { type: integer, minimum: 0 }
+        status: { type: string, enum: [ok, warning, blocked] }
+        checks:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, status, message, repair]
+            properties:
+              code: { type: string }
+              status: { type: string, enum: [pass, warn, fail] }
+              message: { type: string }
+              repair: { type: [string, "null"] }

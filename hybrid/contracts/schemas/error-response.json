@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/error-response.json",
+  "title": "ErrorResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message", "retryable"],
+  "properties": {
+    "code": {"type": "string"},
+    "message": {"type": "string"},
+    "retryable": {"type": "boolean"},
+    "current_revision": {"type": ["integer", "null"], "minimum": 0},
+    "details": {"type": "object"}
+  }
+}
