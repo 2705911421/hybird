@@ -282,7 +282,7 @@ components:
     ContextQueryResult:
       type: object
       additionalProperties: false
-      required: [request_id, project_id, revision, authoritative_facts, retrieval_candidates, untrusted_materials, trace]
+      required: [request_id, project_id, revision, authoritative_facts, retrieval_candidates, untrusted_materials, layers, conflicts, trace]
       properties:
         request_id: { type: string, format: uuid }
         project_id: { type: string }
@@ -291,7 +291,7 @@ components:
           type: array
           items:
             type: object
-            required: [fact_id, subject, predicate, value, valid_from_revision]
+            required: [fact_id, subject, predicate, value, valid_from_revision, valid_to_revision, source, confidence, updated_at]
             properties:
               fact_id: { type: string }
               subject: { type: string }
@@ -299,25 +299,73 @@ components:
               value: {}
               valid_from_revision: { type: integer, minimum: 0 }
               valid_to_revision: { type: [integer, "null"], minimum: 0 }
+              source: { type: string }
+              confidence: { type: number, minimum: 0, maximum: 1 }
+              updated_at: { type: string, format: date-time }
         retrieval_candidates:
           type: array
           items:
             type: object
-            required: [source_id, text, score, trust]
+            required: [source_id, text, score, trust, updated_at]
             properties:
               source_id: { type: string }
               text: { type: string }
               score: { type: number }
               trust: { type: string, const: untrusted_content }
+              updated_at: { type: string, format: date-time }
         untrusted_materials:
           type: array
           items: { type: object }
+        layers:
+          type: object
+          additionalProperties: false
+          required: [hard_constraints, plot_commitments, relevant_memory, recent_narrative, style_guidance]
+          properties:
+            hard_constraints: { type: array, items: { $ref: "#/components/schemas/ContextItem" } }
+            plot_commitments: { type: array, items: { $ref: "#/components/schemas/ContextItem" } }
+            relevant_memory: { type: array, items: { $ref: "#/components/schemas/ContextItem" } }
+            recent_narrative: { type: array, items: { $ref: "#/components/schemas/ContextItem" } }
+            style_guidance: { type: array, items: { $ref: "#/components/schemas/ContextItem" } }
+        conflicts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [conflict_id, subject, predicate, item_ids, values, message]
+            properties:
+              conflict_id: { type: string }
+              subject: { type: string }
+              predicate: { type: string }
+              item_ids: { type: array, minItems: 2, items: { type: string } }
+              values: { type: array, minItems: 2 }
+              message: { type: string }
         trace:
           type: object
           required: [budget_used, selected_source_ids]
           properties:
             budget_used: { type: integer, minimum: 0 }
             selected_source_ids: { type: array, items: { type: string } }
+    ContextItem:
+      type: object
+      additionalProperties: false
+      required: [item_id, layer, content, source, confidence, updated_at, importance, trust, subject, predicate]
+      properties:
+        item_id: { type: string }
+        layer: { type: string, enum: [hard_constraints, plot_commitments, relevant_memory, recent_narrative, style_guidance] }
+        content: { type: string }
+        source:
+          type: object
+          additionalProperties: false
+          required: [kind, id]
+          properties:
+            kind: { type: string, enum: [structured_query, rag, chapter_summary, request_intent] }
+            id: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        updated_at: { type: string, format: date-time }
+        importance: { type: integer, minimum: 0, maximum: 100 }
+        trust: { type: string, enum: [trusted, untrusted_content] }
+        subject: { type: [string, "null"] }
+        predicate: { type: [string, "null"] }
     EntityResult:
       type: object
       additionalProperties: false

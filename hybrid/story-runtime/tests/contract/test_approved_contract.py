@@ -67,7 +67,8 @@ def test_inline_read_responses_match_approved_components(app, auth_headers):
         context = client.post("/api/story-runtime/v1/queries/context", headers=auth_headers, json=query).json()
         entity = client.get("/api/story-runtime/v1/projects/lighthouse-fixture/entities/char-lin", headers=auth_headers).json()
         doctor = client.get("/api/story-runtime/v1/projects/lighthouse-fixture/doctor", headers=auth_headers).json()
-    Draft202012Validator(schemas["ContextQueryResult"]).validate(context)
+    openapi_schema = {"components": {"schemas": schemas}, "$ref": "#/components/schemas/ContextQueryResult"}
+    Draft202012Validator(openapi_schema).validate(context)
     Draft202012Validator(schemas["EntityResult"]).validate(entity)
     Draft202012Validator(schemas["DoctorResult"]).validate(doctor)
 

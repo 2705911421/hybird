@@ -113,7 +113,7 @@ class StoryRepository:
 
     def get_project(self, project_id: str) -> dict[str, Any]:
         with self.database.connect() as conn:
-            row = conn.execute("SELECT project_id,revision,phase,latest_chapter,schema_version FROM projects WHERE project_id=?", (project_id,)).fetchone()
+            row = conn.execute("SELECT project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at FROM projects WHERE project_id=?", (project_id,)).fetchone()
             if not row:
                 raise NotFoundError("PROJECT_NOT_FOUND", f"project not found: {project_id}")
             return dict(row)
@@ -133,7 +133,8 @@ class StoryRepository:
         terms = [term.casefold() for term in re.findall(r"[\w\u3400-\u9fff]+", intent) if len(term) > 1]
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM facts WHERE project_id=? AND valid_to_revision IS NULL ORDER BY fact_id", (project_id,)
+                "SELECT f.*,p.updated_at FROM facts f JOIN projects p USING(project_id) "
+                "WHERE f.project_id=? AND valid_to_revision IS NULL ORDER BY fact_id", (project_id,)
             ).fetchall()
         ranked = []
         for row in rows:
@@ -148,6 +149,7 @@ class StoryRepository:
             AuthoritativeFact(
                 fact_id=row["fact_id"], subject=row["subject"], predicate=row["predicate"], value=json.loads(row["value_json"]),
                 valid_from_revision=row["valid_from_revision"], valid_to_revision=row["valid_to_revision"],
+                source=f"fact:{row['fact_id']}", confidence=1.0, updated_at=row["updated_at"],
             )
             for _, row in ranked[:limit]
         ]
@@ -155,7 +157,11 @@ class StoryRepository:
     def rag_search(self, project_id: str, query: str, limit: int) -> list[RetrievalCandidate]:
         terms = [term.casefold() for term in re.findall(r"[\w\u3400-\u9fff]+", query) if len(term) > 1]
         with self.database.connect() as conn:
-            rows = conn.execute("SELECT source_id,text FROM retrieval_documents WHERE project_id=? ORDER BY source_id", (project_id,)).fetchall()
+            rows = conn.execute(
+                "SELECT d.source_id,d.text,p.updated_at FROM retrieval_documents d "
+                "JOIN projects p USING(project_id) WHERE d.project_id=? ORDER BY d.source_id",
+                (project_id,),
+            ).fetchall()
         scored = []
         for row in rows:
             text = row["text"].casefold()
@@ -164,7 +170,74 @@ class StoryRepository:
                 score = overlap / max(1.0, len(terms))
                 scored.append((score, row))
         scored.sort(key=lambda item: (-item[0], item[1]["source_id"]))
-        return [RetrievalCandidate(source_id=row["source_id"], text=row["text"], score=round(score, 6)) for score, row in scored[:limit]]
+        return [RetrievalCandidate(source_id=row["source_id"], text=row["text"], score=round(score, 6), updated_at=row["updated_at"]) for score, row in scored[:limit]]
+
+    def active_fact_conflicts(self, project_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as conn:
+            keys = conn.execute(
+                "SELECT subject,predicate FROM facts WHERE project_id=? AND valid_to_revision IS NULL "
+                "GROUP BY subject,predicate HAVING COUNT(DISTINCT value_json)>1 ORDER BY subject,predicate",
+                (project_id,),
+            ).fetchall()
+            conflicts = []
+            for key in keys:
+                group = conn.execute(
+                    "SELECT fact_id,value_json FROM facts WHERE project_id=? AND subject=? AND predicate=? "
+                    "AND valid_to_revision IS NULL ORDER BY fact_id",
+                    (project_id, key["subject"], key["predicate"]),
+                ).fetchall()
+                values = [json.loads(row["value_json"]) for row in group]
+                conflicts.append({
+                    "subject": key["subject"],
+                    "predicate": key["predicate"],
+                    "item_ids": [row["fact_id"] for row in group],
+                    "values": values,
+                })
+        return conflicts
+
+    def recent_chapter_summaries(self, project_id: str, before_chapter: int, limit: int = 5) -> list[dict[str, Any]]:
+        with self.database.connect() as conn:
+            rows = conn.execute(
+                "SELECT chapter_number,title,summary FROM chapter_summaries "
+                "WHERE project_id=? AND chapter_number<? ORDER BY chapter_number DESC LIMIT ?",
+                (project_id, before_chapter, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def latest_timeline_entry(self, project_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as conn:
+            row = conn.execute(
+                "SELECT timeline_id,sequence_key,title,details_json FROM timeline "
+                "WHERE project_id=? ORDER BY sequence_key DESC,timeline_id DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        return {**dict(row), "details": json.loads(row["details_json"])} if row else None
+
+    def recent_narrative_documents(self, project_id: str, before_chapter: int, limit: int = 3) -> list[dict[str, Any]]:
+        with self.database.connect() as conn:
+            latest = conn.execute(
+                "SELECT MAX(chapter_number) FROM retrieval_documents WHERE project_id=? AND chapter_number<?",
+                (project_id, before_chapter),
+            ).fetchone()[0]
+            if latest is None:
+                return []
+            rows = conn.execute(
+                "SELECT d.source_id,d.text,d.chapter_number,p.updated_at FROM retrieval_documents d "
+                "JOIN projects p USING(project_id) WHERE d.project_id=? AND d.chapter_number=? "
+                "ORDER BY d.source_id DESC LIMIT ?",
+                (project_id, latest, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def active_narrative_threads(self, project_id: str, limit: int = 25) -> list[dict[str, Any]]:
+        with self.database.connect() as conn:
+            rows = conn.execute(
+                "SELECT thread_id,title,status,introduced_chapter,resolved_chapter,details_json "
+                "FROM narrative_threads WHERE project_id=? AND resolved_chapter IS NULL "
+                "ORDER BY introduced_chapter,thread_id LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
 
     def projection_health(self, project_id: str) -> dict[str, Any]:
         with self.database.connect() as conn:

@@ -1,0 +1,14 @@
+/.agents/
+/.codex/
+/webnovel-writer/
+
+**/node_modules/
+**/dist/
+**/.pytest_cache/
+**/__pycache__/
+**/.venv*/
+**/*.egg-info/
+**/data/
+**/*.db
+**/*.db-shm
+**/*.db-wal

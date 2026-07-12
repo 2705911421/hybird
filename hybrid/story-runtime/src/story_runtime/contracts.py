@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -60,6 +61,9 @@ class AuthoritativeFact(StrictModel):
     value: Any
     valid_from_revision: int = Field(ge=0)
     valid_to_revision: int | None = Field(default=None, ge=0)
+    source: str
+    confidence: float = Field(ge=0, le=1)
+    updated_at: datetime
 
 
 class RetrievalCandidate(StrictModel):
@@ -67,6 +71,51 @@ class RetrievalCandidate(StrictModel):
     text: str
     score: float
     trust: Literal["untrusted_content"] = "untrusted_content"
+    updated_at: datetime
+
+
+ContextLayerName = Literal[
+    "hard_constraints",
+    "plot_commitments",
+    "relevant_memory",
+    "recent_narrative",
+    "style_guidance",
+]
+
+
+class ContextItemSource(StrictModel):
+    kind: Literal["structured_query", "rag", "chapter_summary", "request_intent"]
+    id: str
+
+
+class ContextItem(StrictModel):
+    item_id: str
+    layer: ContextLayerName
+    content: str
+    source: ContextItemSource
+    confidence: float = Field(ge=0, le=1)
+    updated_at: datetime
+    importance: int = Field(ge=0, le=100)
+    trust: Literal["trusted", "untrusted_content"]
+    subject: str | None = None
+    predicate: str | None = None
+
+
+class ContextLayers(StrictModel):
+    hard_constraints: list[ContextItem] = Field(default_factory=list)
+    plot_commitments: list[ContextItem] = Field(default_factory=list)
+    relevant_memory: list[ContextItem] = Field(default_factory=list)
+    recent_narrative: list[ContextItem] = Field(default_factory=list)
+    style_guidance: list[ContextItem] = Field(default_factory=list)
+
+
+class ContextConflict(StrictModel):
+    conflict_id: str
+    subject: str
+    predicate: str
+    item_ids: list[str] = Field(min_length=2)
+    values: list[Any] = Field(min_length=2)
+    message: str
 
 
 class QueryTrace(StrictModel):
@@ -81,6 +130,8 @@ class ContextQueryResult(StrictModel):
     authoritative_facts: list[AuthoritativeFact]
     retrieval_candidates: list[RetrievalCandidate]
     untrusted_materials: list[dict[str, Any]]
+    layers: ContextLayers
+    conflicts: list[ContextConflict]
     trace: QueryTrace
 
 
