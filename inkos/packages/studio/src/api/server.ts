@@ -2726,6 +2726,58 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
   });
 
+  type Phase7MigrationClient = StoryRuntimeClient & {
+    legacyMigrationJobs(targetProjectId?: string): Promise<Record<string, unknown>>;
+    createLegacyMigrationJob(input: { sourcePath: string; targetProjectId: string; sourceType?: "auto" | "inkos" | "webnovel-writer"; createNewVersion?: boolean }): Promise<Record<string, unknown>>;
+    legacyMigrationJob(jobId: string): Promise<Record<string, unknown> & { migration_job_id: string }>;
+    decideLegacyMigration(jobId: string, decisions: ReadonlyArray<{ conflict_id: string; decision: "choose_candidate" | "merge" | "ignore" | "quarantine"; candidate_id?: string; note?: string }>): Promise<Record<string, unknown>>;
+    legacyMigrationAction(jobId: string, action: "scan" | "dry-run" | "snapshot" | "import" | "verify" | "pause" | "resume" | "cutover" | "rollback", confirmation?: string): Promise<Record<string, unknown>>;
+  };
+  const createPhase7MigrationClient = async () => await createRuntimeClient() as Phase7MigrationClient;
+
+  app.get("/api/v1/story-runtime/migration-jobs", async (c) => {
+    try { return c.json(await (await createPhase7MigrationClient()).legacyMigrationJobs(c.req.query("targetProjectId"))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/migration-jobs", async (c) => {
+    const body: { sourcePath?: string; targetProjectId?: string; sourceType?: "auto" | "inkos" | "webnovel-writer"; createNewVersion?: boolean } = await c.req.json().catch(() => ({}));
+    if (!body.sourcePath?.trim() || !body.targetProjectId || !isSafeBookId(body.targetProjectId)) {
+      return c.json({ error: { code: "INVALID_MIGRATION_SOURCE", message: "A source directory and safe target project ID are required." } }, 400);
+    }
+    try { return c.json(await (await createPhase7MigrationClient()).createLegacyMigrationJob({ sourcePath: body.sourcePath.trim(), targetProjectId: body.targetProjectId, sourceType: body.sourceType, createNewVersion: body.createNewVersion })); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/migration-jobs/:jobId", async (c) => {
+    try { return c.json(await (await createPhase7MigrationClient()).legacyMigrationJob(c.req.param("jobId"))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/migration-jobs/:jobId/decisions", async (c) => {
+    const body: { decisions?: ReadonlyArray<{ conflict_id: string; decision: "choose_candidate" | "merge" | "ignore" | "quarantine"; candidate_id?: string; note?: string }> } = await c.req.json().catch(() => ({}));
+    if (!Array.isArray(body.decisions) || body.decisions.length === 0) return c.json({ error: { code: "MIGRATION_DECISIONS_REQUIRED", message: "At least one explicit decision is required." } }, 400);
+    try { return c.json(await (await createPhase7MigrationClient()).decideLegacyMigration(c.req.param("jobId"), body.decisions)); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/migration-jobs/:jobId/:action", async (c) => {
+    const actions = new Set(["scan", "dry-run", "snapshot", "import", "verify", "pause", "resume", "cutover", "rollback"] as const);
+    const action = c.req.param("action") as "scan" | "dry-run" | "snapshot" | "import" | "verify" | "pause" | "resume" | "cutover" | "rollback";
+    if (!actions.has(action)) return c.json({ error: { code: "INVALID_MIGRATION_ACTION", message: "Unsupported migration action." } }, 400);
+    const body: { confirmation?: string } = await c.req.json().catch(() => ({}));
+    try { return c.json(await (await createPhase7MigrationClient()).legacyMigrationAction(c.req.param("jobId"), action, body.confirmation)); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/migration-jobs/:jobId/report", async (c) => {
+    try {
+      const job = await (await createPhase7MigrationClient()).legacyMigrationJob(c.req.param("jobId"));
+      c.header("Content-Disposition", `attachment; filename="migration-${encodeURIComponent(job.migration_job_id)}.json"`);
+      return c.json({ report_version: "phase7-migration-report/v1", generated_at: new Date().toISOString(), ...job });
+    } catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
   app.get("/api/v1/story-runtime/configuration/status", async (c) => {
     try { return c.json(await (await createRuntimeClient()).configurationStatus()); }
     catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }

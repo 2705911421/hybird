@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Hybrid Story Runtime API
-  version: 0.6.0
+  version: 0.7.0
   description: >-
     Versioned boundary between InkOS TypeScript application services and the
     Python Story Runtime. The runtime is the only writer of authoritative
@@ -21,6 +21,7 @@ tags:
   - name: Operations
   - name: Observability
   - name: Recovery
+  - name: Migration
 
 paths:
   /health:
@@ -155,6 +156,123 @@ paths:
       operationId: getMigrationStatus
       responses:
         "200": { description: Read-only migration status, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/migration" } } } }
+
+  /migration-jobs:
+    post:
+      tags: [Migration]
+      operationId: createLegacyMigrationJob
+      description: Creates or reuses a Phase 7 job; the source is treated as read-only.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: ./schemas/migration-job-request.json } } } }
+      responses:
+        "200": { description: Discovered job, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+    get:
+      tags: [Migration]
+      operationId: listLegacyMigrationJobs
+      parameters: [{ name: target_project_id, in: query, schema: { type: string } }]
+      responses:
+        "200": { description: Migration jobs, content: { application/json: { schema: { type: object, additionalProperties: false, required: [items], properties: { items: { type: array, items: { $ref: ./schemas/migration-job-result.json } } } } } } }
+
+  /migration-jobs/{job_id}:
+    get:
+      tags: [Migration]
+      operationId: getLegacyMigrationJob
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      responses:
+        "200": { description: Job state and evidence, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /migration-jobs/{job_id}/scan:
+    post:
+      tags: [Migration]
+      operationId: scanLegacyMigrationSource
+      description: Scans without following symlinks, executing source scripts, or writing the source; emits CIR.
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Scanned, mapped and validated job, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "409": { $ref: "#/components/responses/RevisionConflict" } }
+
+  /migration-jobs/{job_id}/decisions:
+    post:
+      tags: [Migration]
+      operationId: decideLegacyMigrationConflicts
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: ./schemas/migration-decision-request.json } } } }
+      responses: { "200": { description: Decision audit retained on job, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "409": { $ref: "#/components/responses/RevisionConflict" } }
+
+  /migration-jobs/{job_id}/dry-run:
+    post:
+      tags: [Migration]
+      operationId: dryRunLegacyMigration
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Complete preview without target authority writes, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } } }
+
+  /migration-jobs/{job_id}/snapshot:
+    post:
+      tags: [Migration]
+      operationId: snapshotLegacyMigrationTarget
+      description: Uses SQLite backup and verifies integrity, checksum and restore readiness.
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Snapshot checkpoint, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "403": { $ref: "#/components/responses/Forbidden" } }
+
+  /migration-jobs/{job_id}/import:
+    post:
+      tags: [Migration]
+      operationId: importLegacyMigration
+      description: Imports CIR with stable-item idempotency; authority remains legacy.
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Import checkpoint, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "403": { $ref: "#/components/responses/Forbidden" }, "409": { $ref: "#/components/responses/RevisionConflict" } }
+
+  /migration-jobs/{job_id}/verify:
+    post:
+      tags: [Migration]
+      operationId: verifyLegacyMigration
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Coverage, checksums, projection/replay hashes and doctor result, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } } }
+
+  /migration-jobs/{job_id}/pause:
+    post:
+      tags: [Migration]
+      operationId: pauseLegacyMigration
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Paused job, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } } }
+
+  /migration-jobs/{job_id}/resume:
+    post:
+      tags: [Migration]
+      operationId: resumeLegacyMigration
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Resumed job, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } } }
+
+  /migration-jobs/{job_id}/cutover:
+    post:
+      tags: [Migration]
+      operationId: cutoverLegacyMigration
+      description: Changes authority_mode only after verified completion and exact user confirmation.
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Runtime is the single authority, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "409": { $ref: "#/components/responses/RevisionConflict" } }
+
+  /migration-jobs/{job_id}/rollback:
+    post:
+      tags: [Migration]
+      operationId: rollbackLegacyMigration
+      description: Restores the verified target snapshot before cutover; source files are untouched.
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      requestBody: { $ref: "#/components/requestBodies/MigrationAction" }
+      responses: { "200": { description: Rolled-back target, content: { application/json: { schema: { $ref: ./schemas/migration-job-result.json } } } }, "409": { $ref: "#/components/responses/RevisionConflict" } }
+
+  /migration-jobs/{job_id}/report:
+    get:
+      tags: [Migration]
+      operationId: downloadLegacyMigrationReport
+      parameters: [{ $ref: "#/components/parameters/MigrationJobId" }]
+      responses: { "200": { description: Downloadable migration report, content: { application/json: { schema: { type: object } } } } }
 
   /configuration/status:
     get:
@@ -582,6 +700,22 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+    MigrationJobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  requestBodies:
+    MigrationAction:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              actor: { type: string, default: local-operator }
+              confirmation: { type: [string, "null"] }
   responses:
     OperationCompleted:
       description: Operation result; replayed=true means an idempotent retry.

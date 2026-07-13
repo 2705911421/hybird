@@ -21,6 +21,8 @@ from .contracts import (
     CommitDetail, CommitListResult, DiagnosticReport, EventTimelineResult, MigrationStatus,
     ProjectionListResult, RecoveryExecuteRequest, RecoveryJob, RecoveryJobListResult,
     RecoveryPreviewRequest, ReviewOverview, RuntimeConfigurationStatus, RuntimeOverview,
+    CreateMigrationJobRequest, MigrationActionRequest, MigrationDecisionsRequest,
+    MigrationJobListResult, MigrationJobResult,
 )
 from .database import Database
 from .errors import ConflictError, FeatureDisabledError, NotFoundError, RuntimeErrorBase
@@ -29,6 +31,7 @@ from .services import RuntimeServices
 from .outbox import OutboxWorker
 from .reviews import ReviewService
 from .observability import ObservabilityService, RecoveryService, redact, redact_text
+from .migration_jobs import LegacyMigrationService
 
 API_PREFIX = "/api/story-runtime/v1"
 WRITE_RESPONSES = {
@@ -61,6 +64,7 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     app.state.reviews = ReviewService(database)
     app.state.observability = ObservabilityService(database, repository)
     app.state.recovery = RecoveryService(database, repository)
+    app.state.migration_jobs = LegacyMigrationService(database, config)
 
     def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
         if authorization != f"Bearer {config.local_token}":
@@ -93,6 +97,18 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     def observability_enabled() -> None:
         if not config.observability_enabled:
             raise FeatureDisabledError("OBSERVABILITY_DISABLED", "Runtime observability is disabled by feature flag.")
+
+    def migration_enabled() -> None:
+        if not config.migration_enabled:
+            raise FeatureDisabledError("MIGRATION_DISABLED", "Legacy project migration is disabled by feature flag.")
+
+    def migration_write_enabled() -> None:
+        migration_enabled()
+        if not config.writes_enabled:
+            raise FeatureDisabledError(
+                "WRITE_FEATURE_DISABLED", "Target import operations require STORY_RUNTIME_ENABLE_WRITES=1",
+                details={"feature_flag": "STORY_RUNTIME_ENABLE_WRITES", "enabled": False},
+            )
 
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/overview", response_model=RuntimeOverview, operation_id="getRuntimeOverview", dependencies=[Depends(authorize), Depends(observability_enabled)])
     def runtime_overview(project_id: str):
@@ -127,6 +143,62 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     @app.get(f"{API_PREFIX}/migration/status", response_model=MigrationStatus, operation_id="getMigrationStatus", dependencies=[Depends(authorize), Depends(observability_enabled)])
     def migration_status():
         return app.state.observability.migration()
+
+    @app.post(f"{API_PREFIX}/migration-jobs", response_model=MigrationJobResult, operation_id="createLegacyMigrationJob", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def create_migration_job(body: CreateMigrationJobRequest):
+        return app.state.migration_jobs.create(body)
+
+    @app.get(f"{API_PREFIX}/migration-jobs", response_model=MigrationJobListResult, operation_id="listLegacyMigrationJobs", dependencies=[Depends(authorize), Depends(migration_enabled)])
+    def list_migration_jobs(target_project_id: str | None = None):
+        return app.state.migration_jobs.list(target_project_id)
+
+    @app.get(f"{API_PREFIX}/migration-jobs/{{job_id}}", response_model=MigrationJobResult, operation_id="getLegacyMigrationJob", dependencies=[Depends(authorize), Depends(migration_enabled)])
+    def get_migration_job(job_id: str):
+        return app.state.migration_jobs.get(job_id)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/scan", response_model=MigrationJobResult, operation_id="scanLegacyMigrationSource", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def scan_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.scan(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/decisions", response_model=MigrationJobResult, operation_id="decideLegacyMigrationConflicts", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def decide_migration_job(job_id: str, body: MigrationDecisionsRequest):
+        return app.state.migration_jobs.decide(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/dry-run", response_model=MigrationJobResult, operation_id="dryRunLegacyMigration", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def dry_run_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.dry_run(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/snapshot", response_model=MigrationJobResult, operation_id="snapshotLegacyMigrationTarget", dependencies=[Depends(authorize), Depends(migration_write_enabled)], responses=WRITE_RESPONSES)
+    def snapshot_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.snapshot(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/import", response_model=MigrationJobResult, operation_id="importLegacyMigration", dependencies=[Depends(authorize), Depends(migration_write_enabled)], responses=WRITE_RESPONSES)
+    def import_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.import_job(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/verify", response_model=MigrationJobResult, operation_id="verifyLegacyMigration", dependencies=[Depends(authorize), Depends(migration_write_enabled)], responses=WRITE_RESPONSES)
+    def verify_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.verify(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/pause", response_model=MigrationJobResult, operation_id="pauseLegacyMigration", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def pause_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.pause(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/resume", response_model=MigrationJobResult, operation_id="resumeLegacyMigration", dependencies=[Depends(authorize), Depends(migration_enabled)], responses=WRITE_RESPONSES)
+    def resume_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.resume(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/cutover", response_model=MigrationJobResult, operation_id="cutoverLegacyMigration", dependencies=[Depends(authorize), Depends(migration_write_enabled)], responses=WRITE_RESPONSES)
+    def cutover_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.cutover(job_id, body)
+
+    @app.post(f"{API_PREFIX}/migration-jobs/{{job_id}}/rollback", response_model=MigrationJobResult, operation_id="rollbackLegacyMigration", dependencies=[Depends(authorize), Depends(migration_write_enabled)], responses=WRITE_RESPONSES)
+    def rollback_migration_job(job_id: str, body: MigrationActionRequest):
+        return app.state.migration_jobs.rollback(job_id, body)
+
+    @app.get(f"{API_PREFIX}/migration-jobs/{{job_id}}/report", operation_id="downloadLegacyMigrationReport", dependencies=[Depends(authorize), Depends(migration_enabled)])
+    def migration_job_report(job_id: str):
+        return app.state.migration_jobs.report(job_id)
 
     @app.get(f"{API_PREFIX}/configuration/status", response_model=RuntimeConfigurationStatus, operation_id="getRuntimeConfigurationStatus", dependencies=[Depends(authorize), Depends(observability_enabled)])
     def configuration_status():

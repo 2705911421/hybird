@@ -236,11 +236,16 @@ export {
   HealthResponseSchema as StoryRuntimeHealthResponseSchema,
   ProjectStatusResponseSchema as StoryRuntimeProjectStatusResponseSchema,
   ContextQueryResultSchema as StoryRuntimeContextQueryResultSchema,
+  LegacyMigrationStageSchema,
+  LegacyMigrationJobSchema,
+  LegacyMigrationJobListSchema,
   type StoryRuntimeConfig,
   type StoryRuntimeMode,
   type RuntimeHealth,
   type RuntimeProjectStatus,
   type RuntimeContextResult,
+  type LegacyMigrationJob,
+  type LegacyMigrationJobList,
 } from "./story-runtime/schemas.js";
 export {
   PLANNER_MEMO_SYSTEM_PROMPT,

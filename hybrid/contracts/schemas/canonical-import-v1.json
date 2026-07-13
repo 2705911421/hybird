@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/canonical-import-v1.json",
+  "title": "Canonical Intermediate Representation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "cir_version", "source_metadata", "project", "chapters", "entities", "aliases",
+    "relationships", "facts", "events", "timeline", "narrative_threads", "reviews",
+    "summaries", "documents", "unresolved_conflicts", "unmapped_fields", "provenance"
+  ],
+  "properties": {
+    "cir_version": { "const": "canonical-import/v1" },
+    "source_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_type", "source_path_fingerprint", "mapping_version", "scanned_at"],
+      "properties": {
+        "source_type": { "enum": ["inkos", "webnovel-writer", "hybrid", "unknown"] },
+        "source_path_fingerprint": { "$ref": "#/$defs/sha256" },
+        "mapping_version": { "type": "string", "minLength": 1 },
+        "scanned_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "project": { "$ref": "#/$defs/item" },
+    "chapters": { "type": "array", "items": { "$ref": "#/$defs/chapter" } },
+    "entities": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "aliases": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "relationships": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "facts": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "timeline": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "narrative_threads": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "reviews": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "summaries": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "documents": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "unresolved_conflicts": { "type": "array", "items": { "$ref": "#/$defs/conflict" } },
+    "unmapped_fields": { "type": "array", "items": { "type": "object" } },
+    "provenance": { "type": "array", "items": { "$ref": "#/$defs/provenance" } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "item": {
+      "type": "object",
+      "required": ["cir_item_id"],
+      "properties": { "cir_item_id": { "type": "string", "format": "uuid" } }
+    },
+    "chapter": {
+      "allOf": [
+        { "$ref": "#/$defs/item" },
+        {
+          "type": "object",
+          "required": ["chapter_number", "title", "body", "body_sha256", "source_sha256", "source_path"],
+          "properties": {
+            "chapter_number": { "type": "integer", "minimum": 1 },
+            "title": { "type": "string" },
+            "body": { "type": "string" },
+            "body_sha256": { "$ref": "#/$defs/sha256" },
+            "source_sha256": { "$ref": "#/$defs/sha256" },
+            "source_path": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["conflict_id", "type", "severity", "blocking", "sources", "candidates", "evidence", "recommended_decision", "user_decision", "resolution_audit"],
+      "properties": {
+        "conflict_id": { "type": "string" },
+        "type": { "enum": ["duplicate_entity", "ambiguous_alias", "conflicting_fact", "conflicting_relationship", "chapter_body_mismatch", "chapter_number_gap", "duplicate_chapter", "timeline_conflict", "hook_state_conflict", "unknown_event_type", "invalid_resource_value", "review_body_hash_mismatch", "orphan_reference", "corrupted_source", "unmapped_field"] },
+        "severity": { "enum": ["info", "minor", "major", "critical"] },
+        "blocking": { "type": "boolean" },
+        "sources": { "type": "array", "items": { "type": "object" } },
+        "candidates": { "type": "array", "items": { "type": "object" } },
+        "evidence": { "type": "object" },
+        "recommended_decision": { "type": "string" },
+        "user_decision": { "type": ["object", "null"] },
+        "resolution_audit": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cir_item_id", "source_path", "source_sha256", "source_kind", "locator", "confidence"],
+      "properties": {
+        "cir_item_id": { "type": "string", "format": "uuid" },
+        "source_path": { "type": "string" },
+        "source_sha256": { "$ref": "#/$defs/sha256" },
+        "source_kind": { "type": "string" },
+        "locator": { "type": "object" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

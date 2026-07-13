@@ -21,6 +21,8 @@ import {
   ReviewOverviewSchema,
   RuntimeConfigurationStatusSchema,
   RuntimeOverviewSchema,
+  LegacyMigrationJobSchema,
+  LegacyMigrationJobListSchema,
   STORY_RUNTIME_SCHEMA_VERSION,
   type RuntimeContextResult,
   type RuntimeHealth,
@@ -43,6 +45,8 @@ import {
   type RuntimeReviewOverview,
   type RuntimeConfigurationStatus,
   type RuntimeOverview,
+  type LegacyMigrationJob,
+  type LegacyMigrationJobList,
 } from "./schemas.js";
 import {
   ChapterReviewArtifactSchema, HumanReviewDecisionSchema, ReviewStatusResultSchema,
@@ -280,6 +284,33 @@ export class StoryRuntimeClient {
 
   revisionDiff(projectId: string, chapterNumber: number): Promise<RevisionDiffResult> {
     return this.request(`/api/story-runtime/v1/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/revision-diff`, RevisionDiffResultSchema);
+  }
+
+  legacyMigrationJobs(targetProjectId?: string): Promise<LegacyMigrationJobList> {
+    return this.request(`/api/story-runtime/v1/migration-jobs${this.query({ target_project_id: targetProjectId })}`, LegacyMigrationJobListSchema);
+  }
+
+  createLegacyMigrationJob(input: { readonly sourcePath: string; readonly targetProjectId: string; readonly sourceType?: "auto" | "inkos" | "webnovel-writer"; readonly createNewVersion?: boolean }): Promise<LegacyMigrationJob> {
+    return this.request("/api/story-runtime/v1/migration-jobs", LegacyMigrationJobSchema, { method: "POST", body: JSON.stringify({
+      source_path: input.sourcePath, target_project_id: input.targetProjectId, source_type: input.sourceType ?? "auto",
+      mapping_version: "phase7-map-v1", create_new_version: input.createNewVersion ?? false,
+    }) });
+  }
+
+  legacyMigrationJob(jobId: string): Promise<LegacyMigrationJob> {
+    return this.request(`/api/story-runtime/v1/migration-jobs/${encodeURIComponent(jobId)}`, LegacyMigrationJobSchema);
+  }
+
+  legacyMigrationAction(jobId: string, action: "scan" | "dry-run" | "snapshot" | "import" | "verify" | "pause" | "resume" | "cutover" | "rollback", confirmation?: string): Promise<LegacyMigrationJob> {
+    return this.request(`/api/story-runtime/v1/migration-jobs/${encodeURIComponent(jobId)}/${action}`, LegacyMigrationJobSchema, {
+      method: "POST", body: JSON.stringify({ actor: "studio-user", confirmation: confirmation ?? null }),
+    });
+  }
+
+  decideLegacyMigration(jobId: string, decisions: ReadonlyArray<{ readonly conflict_id: string; readonly decision: "choose_candidate" | "merge" | "ignore" | "quarantine"; readonly candidate_id?: string; readonly note?: string }>): Promise<LegacyMigrationJob> {
+    return this.request(`/api/story-runtime/v1/migration-jobs/${encodeURIComponent(jobId)}/decisions`, LegacyMigrationJobSchema, {
+      method: "POST", body: JSON.stringify({ decisions }),
+    });
   }
 
   private projectPath(projectId: string): string {

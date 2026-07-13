@@ -245,6 +245,28 @@ export const ContextQueryResultSchema = z.object({
   }).strict(),
 }).strict();
 
+export const LegacyMigrationStageSchema = z.enum([
+  "DISCOVERED", "SCANNED", "MAPPED", "VALIDATED", "AWAITING_DECISIONS", "READY",
+  "IMPORTING", "VERIFYING", "COMPLETED", "PAUSED", "FAILED", "ROLLED_BACK", "QUARANTINED",
+]);
+const MigrationConflictSchema = z.object({
+  conflict_id: z.string(), type: z.string(), severity: z.string(), blocking: z.boolean(),
+  sources: z.array(z.record(z.unknown())), candidates: z.array(z.record(z.unknown())),
+  evidence: z.record(z.unknown()), recommended_decision: z.string(),
+  user_decision: z.record(z.unknown()).nullable(), resolution_audit: z.array(z.record(z.unknown())),
+}).strict();
+export const LegacyMigrationJobSchema = z.object({
+  migration_job_id: z.string().uuid(), source_type: z.enum(["inkos", "webnovel-writer", "hybrid", "unknown"]),
+  source_path_fingerprint: z.string().regex(/^[a-f0-9]{64}$/), target_project_id: z.string(),
+  mapping_version: z.string(), cir_version: z.literal("canonical-import/v1"), current_stage: LegacyMigrationStageSchema,
+  progress: z.number().int().min(0).max(100), warnings: z.array(z.record(z.unknown())),
+  conflicts: z.array(MigrationConflictSchema), decisions: z.record(z.unknown()), checkpoints: z.array(z.record(z.unknown())),
+  audit_log: z.array(z.record(z.unknown())), discovery: z.record(z.unknown()), source_checksum_manifest: z.array(z.record(z.unknown())),
+  target_snapshot: z.record(z.unknown()).nullable(), cir: z.record(z.unknown()).nullable(), dry_run: z.record(z.unknown()).nullable(),
+  verification: z.record(z.unknown()).nullable(), cutover_confirmed: z.boolean(), reused: z.boolean(),
+}).strict();
+export const LegacyMigrationJobListSchema = z.object({ items: z.array(LegacyMigrationJobSchema) }).strict();
+
 export type RuntimeHealth = z.infer<typeof HealthResponseSchema>;
 export type RuntimeProjectStatus = z.infer<typeof ProjectStatusResponseSchema>;
 export type RuntimeOverview = z.infer<typeof RuntimeOverviewSchema>;
@@ -268,3 +290,5 @@ export type ValidateChapterResult = z.infer<typeof ValidateChapterResultSchema>;
 export type FinalizedCommitResult = z.infer<typeof FinalizedCommitResultSchema>;
 export type ProjectCreatedResult = z.infer<typeof ProjectCreatedResultSchema>;
 export type ChapterArtifactResult = z.infer<typeof ChapterArtifactResultSchema>;
+export type LegacyMigrationJob = z.infer<typeof LegacyMigrationJobSchema>;
+export type LegacyMigrationJobList = z.infer<typeof LegacyMigrationJobListSchema>;

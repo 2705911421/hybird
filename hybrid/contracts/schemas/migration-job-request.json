@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/migration-job-request.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_path", "target_project_id"],
+  "properties": {
+    "source_path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+    "target_project_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$" },
+    "source_type": { "enum": ["auto", "inkos", "webnovel-writer"], "default": "auto" },
+    "mapping_version": { "type": "string", "default": "phase7-map-v1" },
+    "create_new_version": { "type": "boolean", "default": false }
+  }
+}

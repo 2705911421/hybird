@@ -1,5 +1,5 @@
 format_version: 1
-phase: 5
+phase: 7
 generated_for: hybrid-story-runtime-0.1.0
 distribution_license: AGPL-3.0-only
 legal_status: "Provisional per ADR-008; maintainer/legal confirmation remains required before distribution."
@@ -15,6 +15,18 @@ upstreams:
     license: AGPL-3.0-only
 
 entries:
+  - target_paths:
+      - src/story_runtime/migration_jobs.py
+      - src/story_runtime/migrations.py
+      - ../contracts/schemas/canonical-import-v1.json
+      - ../contracts/schemas/migration-job-result.json
+    upstream_repository: none
+    original_paths:
+      - "InkOS project layouts (format compatibility only)"
+      - "webnovel-writer project layouts (format compatibility only)"
+    original_commit: none
+    original_license: none
+    modifications: "Original Phase 7 clean implementation of a read-only scanner, versioned CIR, explicit conflict decisions, verified target snapshots, transactional idempotent import, verification, rollback and cutover. It does not execute or import source code and does not copy implementation blocks from either upstream."
   - target_paths:
       - src/story_runtime/reviews.py
       - src/story_runtime/contracts.py
