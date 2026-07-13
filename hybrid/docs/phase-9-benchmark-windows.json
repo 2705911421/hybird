@@ -1,0 +1,153 @@
+{
+  "benchmark": "phase-9/v1",
+  "measured_at_unix": 1783942823,
+  "corpus": {
+    "format": "hybrid-synthetic-corpus/v1",
+    "seed": 20260713,
+    "scale": {
+      "chapters": 600,
+      "chars_per_chapter": 1800,
+      "characters": 320,
+      "relationships": 3200,
+      "facts": 24000,
+      "events": 12000,
+      "threads": 420
+    },
+    "project_id": "synthetic-600-20260713",
+    "chinese_characters": 1096328,
+    "chapters": 600,
+    "entities": 320,
+    "relationships": 3200,
+    "facts": 24002,
+    "events": 12000,
+    "timelines": 7,
+    "threads": 420,
+    "features": [
+      "conflicting-facts",
+      "long-chapter",
+      "emoji",
+      "CJK-filenames",
+      "multi-volume"
+    ],
+    "copyright": "Generated from deterministic templates; contains no copied novel text."
+  },
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "sqlite": "3.53.1"
+  },
+  "setup_ms": {
+    "migration": 26.495,
+    "initialize": 1078.38
+  },
+  "context_query_ms": {
+    "exact": {
+      "p50": 8.174,
+      "p95": 9.861,
+      "p99": 10.327,
+      "max": 11.061
+    },
+    "lexical": {
+      "p50": 99.01,
+      "p95": 116.029,
+      "p99": 124.376,
+      "max": 166.776
+    },
+    "optional_vector": {
+      "status": "not_configured",
+      "values": null
+    }
+  },
+  "context_response": {
+    "max_bytes": 34691,
+    "token_budget_compliance": true,
+    "samples": 30
+  },
+  "chapter_commit_ms": {
+    "normal_lifecycle": {
+      "p50": 40.73,
+      "p95": 43.036,
+      "p99": 43.036,
+      "max": 77.153
+    },
+    "normal_transaction": {
+      "p50": 17.199,
+      "p95": 20.767,
+      "p99": 20.767,
+      "max": 52.06
+    },
+    "large_lifecycle": {
+      "p50": 42.958,
+      "p95": 42.958,
+      "p99": 42.958,
+      "max": 50.31
+    },
+    "large_transaction": {
+      "p50": 17.694,
+      "p95": 17.694,
+      "p99": 17.694,
+      "max": 21.844
+    },
+    "response_loss_retry": {
+      "p50": 5.639,
+      "p95": 6.481,
+      "p99": 6.481,
+      "max": 6.678
+    }
+  },
+  "validation_ms": {
+    "pydantic_query": {
+      "p50": 0.035,
+      "p95": 0.05,
+      "p99": 0.056,
+      "max": 0.076
+    },
+    "serialization": {
+      "p50": 0.331,
+      "p95": 0.543,
+      "p99": 0.607,
+      "max": 0.695
+    },
+    "zod": {
+      "status": "not_measured_by_python_harness"
+    }
+  },
+  "recovery_ms": {
+    "projection_replay_verify": 768.743,
+    "snapshot": 967.48
+  },
+  "replay": {
+    "event_count": 12000,
+    "hash": "e02cf91ba67361538e9c8ea03f3f91f88eab1c45d77ac306b52648f11c4e7f08",
+    "matched": true
+  },
+  "storage": {
+    "database_bytes": 23703552,
+    "wal_bytes_before_truncate": 0,
+    "snapshot_bytes": 23703552,
+    "checkpoint": [
+      0,
+      0,
+      0
+    ],
+    "outbox_pending": 54
+  },
+  "query_plans": {
+    "facts": [
+      "SEARCH facts USING INDEX facts_project_active_idx (project_id=? AND valid_to_revision=?)"
+    ],
+    "events": [
+      "SEARCH story_events USING INDEX story_events_project_sequence_idx (project_id=?)"
+    ],
+    "retrieval": [
+      "SEARCH retrieval_documents USING INDEX retrieval_documents_project_chapter_idx (project_id=? AND chapter_number=?)"
+    ]
+  },
+  "unmeasured": [
+    "vector retrieval",
+    "Studio browser rendering",
+    "Zod validation",
+    "OS package smoke",
+    "24-hour soak"
+  ]
+}

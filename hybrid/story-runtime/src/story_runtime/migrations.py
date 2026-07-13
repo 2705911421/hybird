@@ -494,6 +494,45 @@ MIGRATIONS = (
         DROP TABLE migration_jobs;
         """,
     ),
+    Migration(
+        7,
+        "phase9_scale_indexes",
+        """
+        CREATE INDEX story_events_project_sequence_idx ON story_events(project_id, sequence);
+        CREATE INDEX story_events_project_chapter_idx ON story_events(project_id, chapter_number, sequence);
+        CREATE INDEX retrieval_documents_project_chapter_idx ON retrieval_documents(project_id, chapter_number, source_id);
+        CREATE INDEX facts_project_active_idx ON facts(project_id, valid_to_revision, fact_id);
+        CREATE INDEX outbox_project_status_idx ON outbox(project_id, status, outbox_id);
+        CREATE VIRTUAL TABLE retrieval_fts_trigram USING fts5(
+          project_id UNINDEXED, source_id UNINDEXED, text, tokenize='trigram'
+        );
+        INSERT INTO retrieval_fts_trigram(rowid,project_id,source_id,text)
+          SELECT row_id,project_id,source_id,text FROM retrieval_documents;
+        CREATE TRIGGER retrieval_trigram_ai AFTER INSERT ON retrieval_documents BEGIN
+          INSERT INTO retrieval_fts_trigram(rowid,project_id,source_id,text)
+          VALUES (new.row_id,new.project_id,new.source_id,new.text);
+        END;
+        CREATE TRIGGER retrieval_trigram_ad AFTER DELETE ON retrieval_documents BEGIN
+          DELETE FROM retrieval_fts_trigram WHERE rowid=old.row_id;
+        END;
+        CREATE TRIGGER retrieval_trigram_au AFTER UPDATE ON retrieval_documents BEGIN
+          DELETE FROM retrieval_fts_trigram WHERE rowid=old.row_id;
+          INSERT INTO retrieval_fts_trigram(rowid,project_id,source_id,text)
+          VALUES (new.row_id,new.project_id,new.source_id,new.text);
+        END;
+        """,
+        """
+        DROP TRIGGER retrieval_trigram_au;
+        DROP TRIGGER retrieval_trigram_ad;
+        DROP TRIGGER retrieval_trigram_ai;
+        DROP TABLE retrieval_fts_trigram;
+        DROP INDEX outbox_project_status_idx;
+        DROP INDEX facts_project_active_idx;
+        DROP INDEX retrieval_documents_project_chapter_idx;
+        DROP INDEX story_events_project_chapter_idx;
+        DROP INDEX story_events_project_sequence_idx;
+        """,
+    ),
 )
 
 
@@ -525,6 +564,10 @@ class MigrationEngine:
                 if migration.version in applied and applied[migration.version] != migration.checksum:
                     raise RuntimeError(f"migration checksum drift: {migration.version}")
             current = max(applied, default=0)
+            if current > MIGRATIONS[-1].version:
+                raise RuntimeError(
+                    f"database schema {current} is newer than supported schema {MIGRATIONS[-1].version}"
+                )
             if current < target:
                 for migration in MIGRATIONS:
                     if current < migration.version <= target:

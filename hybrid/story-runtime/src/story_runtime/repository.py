@@ -133,9 +133,20 @@ class StoryRepository:
     def query_facts(self, project_id: str, intent: str, entity_ids: list[str], limit: int) -> list[AuthoritativeFact]:
         terms = [term.casefold() for term in re.findall(r"[\w\u3400-\u9fff]+", intent) if len(term) > 1]
         with self.database.connect() as conn:
+            clauses = []
+            params: list[Any] = [project_id]
+            if entity_ids:
+                clauses.append(f"f.subject IN ({','.join('?' for _ in entity_ids)})")
+                params.extend(entity_ids)
+            if terms:
+                clauses.extend("LOWER(f.subject || ' ' || f.predicate || ' ' || f.value_json) LIKE ?" for _ in terms)
+                params.extend(f"%{term}%" for term in terms)
+            candidate_filter = " AND (" + " OR ".join(clauses) + ")" if clauses else ""
+            params.append(max(limit * 20, limit))
             rows = conn.execute(
                 "SELECT f.*,p.updated_at FROM facts f JOIN projects p USING(project_id) "
-                "WHERE f.project_id=? AND valid_to_revision IS NULL ORDER BY fact_id", (project_id,)
+                "WHERE f.project_id=? AND valid_to_revision IS NULL" + candidate_filter +
+                " ORDER BY f.fact_id LIMIT ?", params,
             ).fetchall()
         ranked = []
         for row in rows:
@@ -157,11 +168,16 @@ class StoryRepository:
 
     def rag_search(self, project_id: str, query: str, limit: int) -> list[RetrievalCandidate]:
         terms = [term.casefold() for term in re.findall(r"[\w\u3400-\u9fff]+", query) if len(term) > 1]
+        if not terms or limit <= 0:
+            return []
+        match = " OR ".join('"' + term.replace('"', '""') + '"' for term in terms)
         with self.database.connect() as conn:
             rows = conn.execute(
-                "SELECT d.source_id,d.text,p.updated_at FROM retrieval_documents d "
-                "JOIN projects p USING(project_id) WHERE d.project_id=? ORDER BY d.source_id",
-                (project_id,),
+                "SELECT d.source_id,d.text,p.updated_at,bm25(retrieval_fts_trigram) AS rank FROM retrieval_fts_trigram "
+                "JOIN retrieval_documents d ON d.row_id=retrieval_fts_trigram.rowid "
+                "JOIN projects p ON p.project_id=d.project_id "
+                "WHERE retrieval_fts_trigram MATCH ? AND d.project_id=? ORDER BY rank,d.source_id LIMIT ?",
+                (match, project_id, max(limit * 10, limit)),
             ).fetchall()
         scored = []
         for row in rows:

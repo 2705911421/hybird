@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://hybrid.local/schemas/chapter-export-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["snapshot_id", "project_id", "revision", "finalized_only", "collection_sha256", "chapter_count", "chapters", "created_at"],
+  "properties": {
+    "snapshot_id": {"type": "string"}, "project_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 0}, "finalized_only": {"const": true}, "collection_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "chapter_count": {"type": "integer", "minimum": 0}, "created_at": {"type": "string", "format": "date-time"},
+    "chapters": {"type": "array", "items": {"allOf": [{"$ref": "chapter-collection-response.json#/$defs/item"}, {"type": "object", "required": ["body"], "properties": {"body": {"type": "string"}}}], "unevaluatedProperties": false}}
+  }
+}

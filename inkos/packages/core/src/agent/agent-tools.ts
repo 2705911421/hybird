@@ -9,7 +9,6 @@ import { mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { StateManager } from "../state/manager.js";
 import { createInteractionToolsFromDeps } from "../interaction/project-tools.js";
-import { writeExportArtifact } from "../interaction/export-artifact.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { normalizePlatformId, normalizePlatformOrOther } from "../models/book.js";
@@ -27,6 +26,8 @@ import type { AgentContext } from "../agents/base.js";
 import { ActionPayloadSchema, isUsablePlayInitialScene, type ActionPayload } from "../interaction/action-envelope.js";
 import { ResearchSearchConfigSchema } from "../models/project.js";
 import { searchWeb } from "../utils/web-search.js";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
+import { StoryRuntimeConfigSchema } from "../story-runtime/schemas.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -836,11 +837,12 @@ export function createSubAgentTool(
                 ? "md"
                 : "txt");
             const exportApprovedOnly = approvedOnly ?? /approved|已通过|通过章节/.test(instruction);
-            const state = new StateManager(projectRoot);
-            const result = await writeExportArtifact(state, targetBookId, {
+            const exportTool = createDeterministicInteractionTools(pipeline, projectRoot).exportBook;
+            if (!exportTool) throw new Error("Exporter is unavailable.");
+            const result = await exportTool(targetBookId, {
               format: inferredFormat,
               approvedOnly: exportApprovedOnly,
-            });
+            }) as { readonly chaptersExported: number; readonly totalWords: number; readonly outputPath: string };
             return textResult(
               `Exported "${targetBookId}": ${result.chaptersExported} chapters, ${result.totalWords} words → ${result.outputPath}`,
             );
@@ -2452,6 +2454,8 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
     ): Promise<AgentToolResult<undefined>> {
       try {
         const bookDir = safeBooksPath(booksRoot, params.bookId);
+        const state = new StateManager(projectRoot);
+        const book = await state.loadBookConfig(params.bookId);
         const regex = new RegExp(params.pattern, "gi");
         const results: string[] = [];
 
@@ -2480,10 +2484,22 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
           }
         }
 
-        await Promise.all([
-          searchDir(join(bookDir, "story"), "story/"),
-          searchDir(join(bookDir, "chapters"), "chapters/"),
-        ]);
+        if (book.authorityMode === "runtime") {
+          const rawConfig = await state.loadProjectConfig();
+          const storyRuntime = StoryRuntimeConfigSchema.parse(rawConfig.storyRuntime ?? {});
+          const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+            storyRuntime,
+            apiToken: storyRuntime.apiTokenEnv ? process.env[storyRuntime.apiTokenEnv] : undefined,
+          }));
+          const chapterResults = await chapterService.search(params.bookId, { query: params.pattern, limit: 100 });
+          results.push(...chapterResults.items.map((hit) => `chapters/${String(hit.number).padStart(4, "0")}:${hit.snippet}`));
+          await searchDir(join(bookDir, "story"), "story/");
+        } else {
+          await Promise.all([
+            searchDir(join(bookDir, "story"), "story/"),
+            searchDir(join(bookDir, "chapters"), "chapters/"),
+          ]);
+        }
 
         if (results.length === 0) {
           return textResult(`No matches for "${params.pattern}" in book "${params.bookId}".`);

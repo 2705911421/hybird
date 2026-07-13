@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { access, readFile, rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
-import { deriveBookIdFromTitle, normalizePlatformOrOther, PipelineRunner, StateManager, type BookConfig } from "@actalk/inkos-core";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver, deriveBookIdFromTitle, normalizePlatformOrOther, PipelineRunner, StateManager, type BookConfig } from "@actalk/inkos-core";
 import {
   formatBookCreateCreated,
   formatBookCreateCreating,
@@ -169,6 +169,11 @@ bookCommand
     try {
       const root = findProjectRoot();
       const state = new StateManager(root);
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+      const chapters = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
       const bookIds = await state.listBooks();
 
       if (bookIds.length === 0) {
@@ -183,18 +188,20 @@ bookCommand
       const books = [];
       for (const id of bookIds) {
         const book = await state.loadBookConfig(id);
-        const nextChapter = await state.getNextChapterNumber(id);
+        const summary = await chapters.summary(id);
         const info = {
           id,
           title: book.title,
           genre: book.genre,
           platform: book.platform,
           status: book.status,
-          chapters: nextChapter - 1,
+          chapters: summary.chapterCount,
+          latestChapter: summary.latestChapter,
+          projectRevision: summary.projectRevision,
         };
         books.push(info);
         if (!opts.json) {
-          log(`  ${id} | ${book.title} | ${book.genre}/${book.platform} | ${book.status} | chapters: ${nextChapter - 1}`);
+          log(`  ${id} | ${book.title} | ${book.genre}/${book.platform} | ${book.status} | chapters: ${summary.chapterCount} | latest: ${summary.latestChapter} | revision: ${summary.projectRevision}`);
         }
       }
 
@@ -228,13 +235,18 @@ bookCommand
       }
 
       const book = await state.loadBookConfig(bookId);
-      const index = await state.loadChapterIndex(bookId);
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+      const chapterSummary = await new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      })).summary(bookId);
+      const chapterCount = chapterSummary.chapterCount;
 
       if (!opts.force) {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
         const answer = await new Promise<string>((resolve) => {
           rl.question(
-            `Delete "${book.title}" (${bookId})? This will remove ${index.length} chapter(s) and all data. (y/N) `,
+            `Delete "${book.title}" (${bookId})? This will remove ${chapterCount} chapter reference(s) and local data. (y/N) `,
             resolve,
           );
         });
@@ -249,9 +261,9 @@ bookCommand
       await rm(bookDir, { recursive: true, force: true });
 
       if (opts.json) {
-        log(JSON.stringify({ deleted: bookId, chapters: index.length }));
+        log(JSON.stringify({ deleted: bookId, chapters: chapterCount }));
       } else {
-        log(`Deleted "${book.title}" (${bookId}): ${index.length} chapter(s) removed.`);
+        log(`Deleted "${book.title}" (${bookId}): ${chapterCount} chapter(s) removed.`);
       }
     } catch (e) {
       if (opts.json) {

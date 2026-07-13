@@ -1,0 +1,22 @@
+{
+  "authority": "runtime",
+  "projectRevision": 7,
+  "snapshotId": "rc1-verification:7:34b88b4013435d7e",
+  "collectionChecksum": "34b88b4013435d7e9d22714e738b13b53ddcb2a2dfe233d9a3ebe568caa67722",
+  "chapterCount": 3,
+  "generatedAt": "2026-07-13T17:46:10.642785Z",
+  "chapters": [
+    {
+      "number": 1,
+      "bodyChecksum": "0ffeb968ab921c6612a874ca9632ff298ac93e19b4bddb496e6551c1e44f6cda"
+    },
+    {
+      "number": 2,
+      "bodyChecksum": "b8ea99c4533dbe44650dda84f83dbfb76fd5332e6396cf8d7ba5463c8f04c1fa"
+    },
+    {
+      "number": 3,
+      "bodyChecksum": "68ce6320d70f6554772915a437b8e2ac33ecbbede0ae233685c05495b41c9ac9"
+    }
+  ]
+}

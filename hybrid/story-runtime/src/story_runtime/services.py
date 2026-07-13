@@ -151,10 +151,20 @@ class RuntimeServices:
         for item in items:
             getattr(layers, item.layer).append(item)
         selected_ids = [item.item_id for item in items]
+        full_item_ids = {item.item_id for item in items if not item.content.startswith("Compressed reference:")}
+        returned_facts = [fact for fact in selected_facts if fact.fact_id in full_item_ids]
+        returned_retrieval = [
+            candidate for candidate in selected_retrieval
+            if f"rag:{candidate.source_id}" in full_item_ids or f"recent:{candidate.source_id}" in full_item_ids
+        ]
+        if selected_retrieval and not returned_retrieval:
+            returned_retrieval = selected_retrieval[:1]
+        # The budget governs the assembled layer payload consumed by generation.
+        # Compatibility arrays and conflict diagnostics are reported separately.
         budget_used = (sum(len(item.model_dump_json()) for item in items) + 3) // 4
         return ContextQueryResult(
             request_id=request.request_id, project_id=request.project_id, revision=project["revision"],
-            authoritative_facts=selected_facts, retrieval_candidates=selected_retrieval, untrusted_materials=[],
+            authoritative_facts=returned_facts, retrieval_candidates=returned_retrieval, untrusted_materials=[],
             layers=layers, conflicts=conflicts,
             trace=QueryTrace(budget_used=budget_used, selected_source_ids=selected_ids),
         )

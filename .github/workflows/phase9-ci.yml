@@ -1,0 +1,138 @@
+name: phase9-cross-platform
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}", cache: pip }
+      - run: python -m pip install -e "hybrid/story-runtime[test]"
+      - run: python -m pip check
+      - run: python -m compileall -q src scripts
+        working-directory: hybrid/story-runtime
+      - run: python -m pytest
+        working-directory: hybrid/story-runtime
+      - run: python hybrid/scripts/check_architecture.py
+      - if: matrix.python == '3.11'
+        run: python scripts/benchmark.py --scale smoke --iterations 10 --commit-iterations 5 --output phase9-smoke.json
+        working-directory: hybrid/story-runtime
+      - if: matrix.python == '3.11'
+        run: python scripts/soak.py --hours 0.01 --interval 0.2 --scale smoke --output phase9-soak-smoke.json
+        working-directory: hybrid/story-runtime
+
+  inkos:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: inkos/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - run: pnpm typecheck
+        working-directory: inkos
+      - run: pnpm build
+        working-directory: inkos
+      - run: pnpm test
+        working-directory: inkos
+
+  offline-and-package-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: python -m pip install build pyinstaller
+      - run: python -m pip wheel . -w wheelhouse
+        working-directory: hybrid/story-runtime
+      - run: python -m pip install --no-index --find-links wheelhouse hybrid-story-runtime
+        working-directory: hybrid/story-runtime
+      - run: story-runtime --db offline.db migrate
+        working-directory: hybrid/story-runtime
+      - run: pyinstaller --clean --noconfirm story-runtime.spec
+        working-directory: hybrid/story-runtime
+      - if: runner.os != 'Windows'
+        run: ./dist/story-runtime --help
+        working-directory: hybrid/story-runtime
+      - if: runner.os == 'Windows'
+        run: .\dist\story-runtime.exe --help
+        working-directory: hybrid/story-runtime
+
+  security-and-supply-chain:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, security-events: write }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: python -m pip install -e "hybrid/story-runtime" pip-audit cyclonedx-bom
+      - run: pip-audit
+      - run: cyclonedx-py environment --output-format JSON --output-file hybrid-sbom-python.cdx.json
+      - run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - run: pnpm audit --audit-level high
+        working-directory: inkos
+      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file ../hybrid-sbom-node.cdx.json
+        working-directory: inkos
+      - uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase9-sbom
+          path: hybrid-sbom-*.cdx.json
+
+  deterministic-studio-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: inkos/pnpm-lock.yaml }
+      - run: python -m pip install -e "hybrid/story-runtime[test]"
+      - run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: inkos
+      - run: pnpm --dir packages/studio exec playwright install --with-deps chromium
+        working-directory: inkos
+      - name: Run Studio and Runtime benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          python hybrid/story-runtime/scripts/phase6_e2e_seed.py --db "$RUNNER_TEMP/studio.db" --fixture hybrid/story-runtime/fixtures/lighthouse-project.json
+          STORY_RUNTIME_TOKEN=phase6-e2e-token STORY_RUNTIME_ENABLE_WRITES=1 python -m story_runtime --db "$RUNNER_TEMP/studio.db" serve --port 47831 >"$RUNNER_TEMP/runtime.log" 2>&1 &
+          runtime_pid=$!
+          PHASE6_E2E_TOKEN=phase6-e2e-token INKOS_STUDIO_PORT=4567 node inkos/packages/studio/dist/api/index.js hybrid/fixtures/studio-phase6 >"$RUNNER_TEMP/studio.log" 2>&1 &
+          studio_pid=$!
+          trap 'kill $studio_pid $runtime_pid 2>/dev/null || true' EXIT
+          for i in {1..50}; do curl -fsS http://127.0.0.1:4567/ >/dev/null && break; sleep .2; done
+          INKOS_STUDIO_BENCHMARK_ITERATIONS=5 INKOS_RUNTIME_COMMIT_ID=77777777-7777-4777-8777-777777777777 INKOS_STUDIO_BENCHMARK_OUTPUT=../hybrid/studio-benchmark.json pnpm benchmark:studio-e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase9-studio-benchmark
+          path: hybrid/studio-benchmark.json

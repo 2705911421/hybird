@@ -511,6 +511,7 @@ class FinalizedCommitResult(StrictModel):
 
 class ChapterArtifactResult(StrictModel):
     project_id: str
+    chapter_id: UUID
     chapter_number: int = Field(ge=1)
     revision: int = Field(ge=1)
     commit_id: UUID
@@ -519,7 +520,101 @@ class ChapterArtifactResult(StrictModel):
     summary: str
     body_sha256: str
     artifact_sha256: str
+    volume_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
     finalized_at: datetime
+
+
+class ChapterListItem(StrictModel):
+    chapter_id: UUID
+    chapter_number: int = Field(ge=1)
+    order_key: int = Field(ge=1)
+    state: Literal["FINALIZED"] = "FINALIZED"
+    title: str
+    summary: str
+    body_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    character_count: int = Field(ge=0)
+    commit_id: UUID
+    resulting_revision: int = Field(ge=1)
+    volume_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finalized_at: datetime
+
+
+class ChapterCollectionResult(StrictModel):
+    project_id: str
+    revision: int = Field(ge=0)
+    finalized_only: Literal[True] = True
+    total_count: int = Field(ge=0)
+    latest_chapter: int = Field(ge=0)
+    items: list[ChapterListItem]
+    page: PageInfo
+
+
+class ChapterAggregateItem(StrictModel):
+    chapter_number: int = Field(ge=1)
+    character_count: int = Field(ge=0)
+    volume_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finalized_at: datetime
+
+
+class VolumeAggregate(StrictModel):
+    volume_id: str
+    chapter_count: int = Field(ge=0)
+    character_count: int = Field(ge=0)
+
+
+class ChapterAggregateResult(StrictModel):
+    project_id: str
+    revision: int = Field(ge=0)
+    chapter_count: int = Field(ge=0)
+    latest_chapter: int = Field(ge=0)
+    total_characters: int = Field(ge=0)
+    chapters: list[ChapterAggregateItem]
+    volumes: list[VolumeAggregate] = Field(default_factory=list)
+
+
+class ChapterExportRequest(StrictModel):
+    expected_revision: int | None = Field(default=None, ge=0)
+    from_chapter: int | None = Field(default=None, ge=1)
+    to_chapter: int | None = Field(default=None, ge=1)
+    volume_id: str | None = None
+    finalized_only: Literal[True] = True
+
+
+class ChapterExportItem(ChapterListItem):
+    body: str
+
+
+class ChapterExportSnapshotResult(StrictModel):
+    snapshot_id: str
+    project_id: str
+    revision: int = Field(ge=0)
+    finalized_only: Literal[True] = True
+    collection_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    chapter_count: int = Field(ge=0)
+    chapters: list[ChapterExportItem]
+    created_at: datetime
+
+
+class ChapterSearchHit(ChapterExportItem):
+    snippet: str
+
+
+class ChapterSearchResult(StrictModel):
+    project_id: str
+    revision: int = Field(ge=0)
+    index_revision: int = Field(ge=0)
+    stale: Literal[False] = False
+    query: str
+    total_count: int = Field(ge=0)
+    items: list[ChapterSearchHit]
+    page: PageInfo
 
 
 class ReplayProjectionsResult(StrictModel):

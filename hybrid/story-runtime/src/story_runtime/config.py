@@ -19,6 +19,12 @@ class RuntimeConfig:
     migration_max_file_bytes: int = 64 * 1024 * 1024
     migration_max_total_bytes: int = 4 * 1024 * 1024 * 1024
     migration_max_files: int = 200_000
+    wal_autocheckpoint_pages: int = 1000
+    journal_size_limit_bytes: int = 64 * 1024 * 1024
+    log_path: Path | None = None
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backups: int = 5
+    max_request_bytes: int = 16 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -36,4 +42,11 @@ class RuntimeConfig:
             migration_max_file_bytes=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_FILE_BYTES", str(64 * 1024 * 1024))),
             migration_max_total_bytes=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_TOTAL_BYTES", str(4 * 1024 * 1024 * 1024))),
             migration_max_files=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_FILES", "200000")),
+            wal_autocheckpoint_pages=int(os.getenv("STORY_RUNTIME_WAL_AUTOCHECKPOINT_PAGES", "1000")),
+            journal_size_limit_bytes=int(os.getenv("STORY_RUNTIME_JOURNAL_SIZE_LIMIT_BYTES", str(64 * 1024 * 1024))),
+            log_path=Path(os.environ["STORY_RUNTIME_LOG_PATH"]).expanduser().resolve()
+            if os.getenv("STORY_RUNTIME_LOG_PATH") else None,
+            log_max_bytes=int(os.getenv("STORY_RUNTIME_LOG_MAX_BYTES", str(10 * 1024 * 1024))),
+            log_backups=int(os.getenv("STORY_RUNTIME_LOG_BACKUPS", "5")),
+            max_request_bytes=int(os.getenv("STORY_RUNTIME_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))),
         )

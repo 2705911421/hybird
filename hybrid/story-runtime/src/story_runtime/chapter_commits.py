@@ -116,15 +116,16 @@ class ChapterCommitService:
     def chapter(self, project_id: str, chapter_number: int) -> ChapterArtifactResult:
         with self.database.connect() as conn:
             row = conn.execute(
-                "SELECT c.project_id,c.chapter_number,c.resulting_revision,c.commit_id,a.title,a.body_text,a.summary,c.body_sha256,c.artifact_sha256,c.finalized_at FROM chapter_commits c JOIN chapter_artifacts a USING(commit_id) WHERE c.project_id=? AND c.chapter_number=? AND c.state='FINALIZED'",
+                "SELECT c.project_id,c.chapter_number,c.resulting_revision,c.commit_id,a.title,a.body_text,a.summary,c.body_sha256,c.artifact_sha256,c.created_at,c.updated_at,c.finalized_at,CAST(json_extract(a.outline_fulfillment_json,'$.volume_id') AS TEXT) AS volume_id FROM chapter_commits c JOIN chapter_artifacts a USING(commit_id) WHERE c.project_id=? AND c.chapter_number=? AND c.state='FINALIZED'",
                 (project_id, chapter_number),
             ).fetchone()
         if not row:
             raise NotFoundError("CHAPTER_NOT_FOUND", f"finalized chapter not found: {chapter_number}")
         return ChapterArtifactResult(
-            project_id=row["project_id"], chapter_number=row["chapter_number"], revision=row["resulting_revision"],
+            project_id=row["project_id"], chapter_id=row["commit_id"], chapter_number=row["chapter_number"], revision=row["resulting_revision"],
             commit_id=row["commit_id"], title=row["title"], body=row["body_text"], summary=row["summary"],
-            body_sha256=row["body_sha256"], artifact_sha256=row["artifact_sha256"], finalized_at=row["finalized_at"],
+            body_sha256=row["body_sha256"], artifact_sha256=row["artifact_sha256"], volume_id=row["volume_id"],
+            created_at=row["created_at"], updated_at=row["updated_at"], finalized_at=row["finalized_at"],
         )
 
     def prepare(self, request: PrepareChapterRequest) -> PrepareChapterResult:

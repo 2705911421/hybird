@@ -12,7 +12,6 @@ export function useRuntimePolling<T>(path: string, options: { readonly intervalM
 
   const refetch = useCallback(async () => {
     if (!path) return false;
-    setLoading((current) => current && !data);
     try {
       const value = await fetchJson<T>(path);
       failures.current = 0;
@@ -26,7 +25,7 @@ export function useRuntimePolling<T>(path: string, options: { readonly intervalM
     } finally {
       setLoading(false);
     }
-  }, [data, path]);
+  }, [path]);
 
   useEffect(() => {
     if (!active || !path) return;

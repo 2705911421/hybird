@@ -198,6 +198,24 @@ export {
   type RuntimeStoryEventInput,
 } from "./story-runtime/client.js";
 export {
+  ChapterApplicationService,
+  ProjectChapterAuthorityResolver,
+  StoryRuntimeChapterReadAdapter,
+  LegacyChapterReadAdapter,
+  ChapterApplicationError,
+  type ChapterApplicationErrorCode,
+  type ChapterAuthority,
+  type ChapterReadPort,
+  type ChapterExportPort,
+  type ChapterAnalyticsPort,
+  type ChapterListItem,
+  type ChapterDetail,
+  type ChapterPage,
+  type ChapterCollectionSummary,
+  type ChapterExportSnapshot,
+  type ChapterSearchPage,
+} from "./chapter-application-service.js";
+export {
   REVIEW_ARTIFACT_SCHEMA_VERSION, EvidenceSpanSchema, ReviewFindingSchema,
   ChapterReviewArtifactSchema, StateMutationProposalSchema, RevisionPlanSchema,
   RevisionResultSchema, HumanReviewDecisionSchema, validateEvidenceSpan,

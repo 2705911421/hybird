@@ -8,12 +8,14 @@ import {
   PipelineRunner,
   StoryRuntimeClient,
   StoryRuntimeClientError,
+  ChapterApplicationService,
+  ChapterApplicationError,
+  ProjectChapterAuthorityResolver,
   RuntimeReviewClient,
   ReviewArtifactMapper,
   createLLMClient,
   createLogger,
   createInteractionToolsFromDeps,
-  computeAnalytics,
   loadProjectConfig,
   loadProjectSession,
   processProjectInteractionRequest,
@@ -1567,11 +1569,12 @@ function resolveCreatedBookIdFromDetails(details: Readonly<Record<string, unknow
 
 async function loadStudioBookListSummary(
   state: StateManager,
+  chapters: ChapterApplicationService,
   bookId: string,
 ): Promise<StudioBookListSummary> {
   const book = await state.loadBookConfig(bookId);
-  const nextChapter = await state.getNextChapterNumber(bookId);
-  return { ...book, chaptersWritten: nextChapter - 1 };
+  const summary = await chapters.summary(bookId);
+  return { ...book, chaptersWritten: summary.chapterCount };
 }
 
 function isCustomServiceId(serviceId: string): boolean {
@@ -2419,6 +2422,28 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return freshConfig;
   }
 
+  async function createChapterService(): Promise<ChapterApplicationService> {
+    const currentConfig = await loadCurrentProjectConfig({ requireApiKey: false });
+    const storyRuntime = currentConfig.storyRuntime;
+    return new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+      storyRuntime,
+      apiToken: storyRuntime?.apiTokenEnv
+        ? process.env[storyRuntime.apiTokenEnv]
+        : undefined,
+    }));
+  }
+
+  function chapterReadError(error: unknown): { readonly status: 404 | 409 | 423 | 502 | 503; readonly body: Record<string, unknown> } {
+    if (error instanceof ChapterApplicationError) {
+      if (error.code === "not_found") return { status: 404, body: { error: { code: "CHAPTER_NOT_FOUND", message: error.message } } };
+      if (error.code === "database_locked") return { status: 423, body: { runtimeState: "database_locked", error: { code: "DATABASE_LOCKED", message: error.message, retryable: true } } };
+      if (error.code === "revision_changed") return { status: 409, body: { runtimeState: "degraded", error: { code: "REVISION_CHANGED", message: error.message, retryable: true }, currentRevision: error.currentRevision } };
+      if (error.code === "runtime_contract_mismatch" || error.code === "runtime_version_mismatch") return { status: 502, body: { runtimeState: "version_mismatch", error: { code: error.code.toUpperCase(), message: error.message, retryable: false } } };
+      if (error.code === "runtime_unavailable" || error.code === "runtime_timeout") return { status: 503, body: { runtimeState: "unavailable", error: { code: error.code.toUpperCase(), message: error.message, retryable: true } } };
+    }
+    return { status: 503, body: { runtimeState: "degraded", error: { code: "CHAPTER_READ_FAILED", message: error instanceof Error ? error.message : String(error), retryable: false } } };
+  }
+
   async function createRuntimeClient(): Promise<StoryRuntimeClient> {
     const currentConfig = await loadCurrentProjectConfig();
     if (currentConfig.storyRuntime.mode !== "story-runtime") {
@@ -2804,20 +2829,31 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.get("/api/v1/books", async (c) => {
-    const bookIds = await state.listBooks();
-    const books = await Promise.all(bookIds.map((id) => loadStudioBookListSummary(state, id)));
-    return c.json({ books });
+    try {
+      const [bookIds, chapterService] = await Promise.all([state.listBooks(), createChapterService()]);
+      const books = await Promise.all(bookIds.map((id) => loadStudioBookListSummary(state, chapterService, id)));
+      return c.json({ books });
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
+    }
   });
 
   app.get("/api/v1/books/:id", async (c) => {
     const id = c.req.param("id");
     try {
       const book = await state.loadBookConfig(id);
-      const chapters = await state.loadChapterIndex(id);
-      const nextChapter = await state.getNextChapterNumber(id);
-      return c.json({ book, chapters, nextChapter });
-    } catch {
-      return c.json({ error: `Book "${id}" not found` }, 404);
+      const page = await (await createChapterService()).list(id, { limit: 100 });
+      const chapters = page.items.map((chapter) => ({
+        number: chapter.number, title: chapter.title, status: chapter.status,
+        wordCount: chapter.characterCount, createdAt: chapter.createdAt, updatedAt: chapter.updatedAt,
+        auditIssues: [], lengthWarnings: [], bodyChecksum: chapter.bodyChecksum,
+        revision: chapter.resultingRevision,
+      }));
+      return c.json({ book, chapters, nextChapter: page.latestChapter + 1, authority: page.authority, projectRevision: page.projectRevision, totalCount: page.totalCount, latestChapter: page.latestChapter });
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
     }
   });
 
@@ -2900,7 +2936,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           broadcast("book:error", { bookId: createdBookId, error });
           return;
         }
-        const book = await loadStudioBookListSummary(state, createdBookId).catch(() => undefined);
+        const book = await loadStudioBookListSummary(state, await createChapterService(), createdBookId).catch(() => undefined);
         bookCreateStatus.delete(createdBookId);
         broadcast("book:created", { bookId: createdBookId, ...(book ? { book } : {}) });
       },
@@ -2936,28 +2972,12 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/books/:id/chapters/:num", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
-    const bookDir = state.bookDir(id);
-    const chaptersDir = join(bookDir, "chapters");
-
     try {
-      if (await isRuntimeAuthority(id)) {
-        const currentConfig = await loadCurrentProjectConfig();
-        if (currentConfig.storyRuntime.mode !== "story-runtime") return c.json({ error: "Legacy project is read-only; run migration first." }, 409);
-        const client = new StoryRuntimeClient({
-          baseUrl: currentConfig.storyRuntime.baseUrl, timeoutMs: currentConfig.storyRuntime.timeoutMs,
-          apiToken: currentConfig.storyRuntime.apiTokenEnv ? process.env[currentConfig.storyRuntime.apiTokenEnv] : undefined,
-        });
-        const chapter = await client.finalizedChapter(id, num);
-        return c.json({ chapterNumber: num, filename: null, content: chapter.body, runtime: chapter });
-      }
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(num).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-      const content = await readFile(join(chaptersDir, match), "utf-8");
-      return c.json({ chapterNumber: num, filename: match, content });
-    } catch {
-      return c.json({ error: "Chapter not found" }, 404);
+      const chapter = await (await createChapterService()).get(id, num);
+      return c.json({ chapterNumber: num, filename: null, content: chapter.body, chapter });
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
     }
   });
 
@@ -3104,10 +3124,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/books/:id/analytics", async (c) => {
     const id = c.req.param("id");
     try {
-      const chapters = await state.loadChapterIndex(id);
-      return c.json(computeAnalytics(id, chapters));
-    } catch {
-      return c.json({ error: `Book "${id}" not found` }, 404);
+      return c.json(await (await createChapterService()).analytics(id));
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
     }
   });
 
@@ -3156,7 +3176,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const id = c.req.param("id");
     const chapters = c.req.query("chapters");
     try {
-      return c.json(await evaluateBookQuality({ state, bookId: id, chapters }));
+      return c.json(await evaluateBookQuality({ state, chapterService: await createChapterService(), bookId: id, chapters }));
     } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
@@ -3211,6 +3231,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       error: "RUNTIME_TYPED_DIFF_REQUIRED",
       message: "Foundation edits must be submitted as typed diffs to Story Runtime.",
     }, 410);
+  });
+
+  app.get("/api/v1/books/:id/chapter-search", async (c) => {
+    const id = c.req.param("id");
+    const query = c.req.query("q")?.trim() ?? "";
+    if (!query) return c.json({ error: { code: "EMPTY_SEARCH_QUERY", message: "Search query is required." } }, 400);
+    try {
+      return c.json(await (await createChapterService()).search(id, {
+        query,
+        cursor: c.req.query("cursor"),
+        limit: Number(c.req.query("limit") ?? 25),
+      }));
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
+    }
   });
 
   app.post("/api/v1/books/:id/chapters/:num/approve", async (c) => {
@@ -4607,7 +4643,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                   throw e;
                 }
               }
-              const book = await loadStudioBookListSummary(state, createdBookId).catch(() => undefined);
+              const book = await loadStudioBookListSummary(state, await createChapterService(), createdBookId).catch(() => undefined);
               bookCreateStatus.delete(createdBookId);
               broadcast("book:created", {
                 bookId: createdBookId,
@@ -4956,7 +4992,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           }
         }
 
-        const book = await loadStudioBookListSummary(state, createdBookId).catch(() => undefined);
+        const book = await loadStudioBookListSummary(state, await createChapterService(), createdBookId).catch(() => undefined);
         bookCreateStatus.delete(createdBookId);
         broadcast("book:created", {
           bookId: createdBookId,
@@ -5110,13 +5146,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     broadcast("audit:start", { bookId: id, chapter: chapterNum });
     try {
       const book = await state.loadBookConfig(id);
-      const chaptersDir = join(bookDir, "chapters");
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(chapterNum).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const content = await readFile(join(chaptersDir, match), "utf-8");
+      const content = (await (await createChapterService()).get(id, chapterNum)).body;
       const currentConfig = await loadCurrentProjectConfig();
       const { ContinuityAuditor } = await import("@actalk/inkos-core");
       const auditor = new ContinuityAuditor({
@@ -5151,7 +5181,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const approvedOnly = c.req.query("approvedOnly") === "true";
 
     try {
+      const chapterService = await createChapterService();
       const artifact = await buildExportArtifact(state, id, {
+        chapterService,
         format: format as "txt" | "md" | "epub",
         approvedOnly,
       });
@@ -5162,10 +5194,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         headers: {
           "Content-Type": artifact.contentType,
           "Content-Disposition": `attachment; filename="${artifact.fileName}"`,
+          "X-InkOS-Project-Revision": String(artifact.manifest.projectRevision),
+          "X-InkOS-Collection-SHA256": artifact.manifest.collectionChecksum,
+          "X-InkOS-Snapshot-Id": artifact.manifest.snapshotId,
         },
       });
-    } catch {
-      return c.json({ error: "Export failed" }, 500);
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
     }
   });
 
@@ -5402,13 +5438,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const bookDir = state.bookDir(id);
 
     try {
-      const chaptersDir = join(bookDir, "chapters");
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(chapterNum).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const content = await readFile(join(chaptersDir, match), "utf-8");
+      const content = (await (await createChapterService()).get(id, chapterNum)).body;
       const { analyzeAITells } = await import("@actalk/inkos-core");
       const result = analyzeAITells(content);
       return c.json({ chapterNumber: chapterNum, ...result });
@@ -5489,17 +5519,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const bookDir = state.bookDir(id);
 
     try {
-      const chaptersDir = join(bookDir, "chapters");
-      const files = await readdir(chaptersDir);
-      const mdFiles = files.filter((f) => f.endsWith(".md") && /^\d{4}/.test(f)).sort();
+      const snapshot = await (await createChapterService()).exportSnapshot(id);
       const { analyzeAITells } = await import("@actalk/inkos-core");
 
       const results = await Promise.all(
-        mdFiles.map(async (f) => {
-          const num = parseInt(f.slice(0, 4), 10);
-          const content = await readFile(join(chaptersDir, f), "utf-8");
-          const result = analyzeAITells(content);
-          return { chapterNumber: num, filename: f, ...result };
+        snapshot.chapters.map(async (chapter) => {
+          const result = analyzeAITells(chapter.body);
+          return { chapterNumber: chapter.number, filename: null, bodyChecksum: chapter.bodyChecksum, revision: snapshot.projectRevision, ...result };
         }),
       );
       return c.json({ bookId: id, results });
@@ -5781,7 +5807,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       try {
         const pipeline = new PipelineRunner(await buildPipelineConfig());
         await pipeline.initSpinoffBook(bookConfig, body.parentBookId, body.direction);
-        const book = await loadStudioBookListSummary(state, bookId).catch(() => undefined);
+        const book = await loadStudioBookListSummary(state, await createChapterService(), bookId).catch(() => undefined);
         bookCreateStatus.delete(bookId);
         broadcast("spinoff:complete", { bookId });
         broadcast("book:created", { bookId, ...(book ? { book } : {}) });
@@ -5828,7 +5854,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       try {
         const pipeline = new PipelineRunner(await buildPipelineConfig());
         await pipeline.initImitationBook(bookConfig, body.referenceText, body.storyIdea, body.sourceName);
-        const book = await loadStudioBookListSummary(state, bookId).catch(() => undefined);
+        const book = await loadStudioBookListSummary(state, await createChapterService(), bookId).catch(() => undefined);
         bookCreateStatus.delete(bookId);
         broadcast("imitation:complete", { bookId });
         broadcast("book:created", { bookId, ...(book ? { book } : {}) });

@@ -1,0 +1,12 @@
+{
+  "id": "rc1-verification",
+  "title": "RC-1 统一事实源验收",
+  "platform": "other",
+  "genre": "sci-fi",
+  "status": "active",
+  "targetChapters": 10,
+  "chapterWordCount": 2000,
+  "authorityMode": "runtime",
+  "createdAt": "2026-07-14T00:00:00+00:00",
+  "updatedAt": "2026-07-14T00:00:00+00:00"
+}

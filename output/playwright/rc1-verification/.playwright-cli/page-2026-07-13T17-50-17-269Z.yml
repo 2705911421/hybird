@@ -1,0 +1,92 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "InkOS InkOS Studio" [ref=e6] [cursor=pointer]:
+      - img "InkOS" [ref=e7]
+      - generic [ref=e16]:
+        - generic [ref=e17]: InkOS
+        - generic [ref=e18]: Studio
+    - generic [ref=e19]:
+      - generic [ref=e20]:
+        - generic [ref=e21]: 开始创作
+        - generic [ref=e22]:
+          - button "长篇小说" [ref=e23] [cursor=pointer]
+          - button "短篇小说" [ref=e28] [cursor=pointer]
+          - button "剧本创作" [ref=e34] [cursor=pointer]
+          - button "分镜创作" [ref=e42] [cursor=pointer]
+          - button "互动影游" [ref=e47] [cursor=pointer]
+          - button "同人创作" [ref=e52] [cursor=pointer]
+          - button "番外创作" [ref=e58] [cursor=pointer]
+          - button "仿写创作" [ref=e65] [cursor=pointer]
+          - button "续写创作" [ref=e71] [cursor=pointer]
+          - button "翻译译介" [ref=e78] [cursor=pointer]
+          - button "分支互动" [ref=e85] [cursor=pointer]
+          - button "开放世界" [ref=e92] [cursor=pointer]
+      - generic [ref=e97]:
+        - button "我的创作" [ref=e98] [cursor=pointer]
+        - generic [ref=e105]:
+          - generic [ref=e106]:
+            - button "展开 RC-1 统一事实源验收" [ref=e107] [cursor=pointer]
+            - button "RC-1 统一事实源验收" [ref=e110] [cursor=pointer]
+          - generic [ref=e114]:
+            - generic [ref=e279]:
+              - button "新会话 1 分钟" [ref=e375] [cursor=pointer]:
+                - generic [ref=e281]: 新会话
+                - generic [ref=e282]: 1 分钟
+              - button [ref=e283] [cursor=pointer]
+            - button "新建会话" [ref=e115] [cursor=pointer]
+      - generic [ref=e118]:
+        - button "互动影游" [ref=e119] [cursor=pointer]
+        - generic [ref=e123]: 还没有互动影游项目
+      - generic [ref=e127]:
+        - button "会话记录" [ref=e128] [cursor=pointer]
+        - button "新建会话" [ref=e137] [cursor=pointer]
+      - generic [ref=e140]:
+        - generic [ref=e141]: 系统
+        - generic [ref=e142]:
+          - button "题材" [ref=e143] [cursor=pointer]
+          - button "模型配置" [ref=e156] [cursor=pointer]
+          - button "项目设置" [ref=e162] [cursor=pointer]
+          - button "守护进程" [ref=e168] [cursor=pointer]
+          - button "日志" [ref=e173] [cursor=pointer]
+      - generic [ref=e178]:
+        - generic [ref=e179]: 工具
+        - generic [ref=e180]:
+          - button "文风" [ref=e181] [cursor=pointer]
+          - button "导入" [ref=e187] [cursor=pointer]
+          - button "市场雷达" [ref=e194] [cursor=pointer]
+          - button "环境诊断" [ref=e200] [cursor=pointer]
+          - button "Runtime 状态" [ref=e207] [cursor=pointer]
+  - generic [ref=e212]:
+    - banner [ref=e213]:
+      - button "首页 / InkOS Studio" [active] [ref=e215] [cursor=pointer]:
+        - generic [ref=e219]: 首页
+        - generic [ref=e220]: /
+        - generic [ref=e221]: InkOS Studio
+      - generic [ref=e222]:
+        - generic [ref=e223]:
+          - button "中" [ref=e224] [cursor=pointer]
+          - button "EN" [ref=e225] [cursor=pointer]
+        - button [ref=e226] [cursor=pointer]
+    - main [ref=e233]:
+      - generic [ref=e450]:
+        - generic [ref=e451]:
+          - generic [ref=e452]:
+            - generic [ref=e453]: 还没有配置 AI 模型
+            - generic [ref=e454]: 配好一个服务商才能开始创作
+          - button "去配置" [ref=e455] [cursor=pointer]
+        - generic [ref=e456]:
+          - generic [ref=e457]:
+            - heading "书籍列表" [level=1] [ref=e458]
+            - paragraph [ref=e459]: 管理你的文学宇宙和 AI 辅助草稿。
+          - button "新建书籍" [ref=e460] [cursor=pointer]
+        - generic [ref=e464]:
+          - generic [ref=e465]:
+            - button "RC-1 统一事实源验收" [ref=e470] [cursor=pointer]
+            - generic [ref=e471]:
+              - generic [ref=e472]: sci-fi
+              - generic [ref=e474]: 3 章
+              - generic [ref=e479]: 进行中
+          - generic [ref=e482]:
+            - button "写下一章" [ref=e483] [cursor=pointer]
+            - button "统计" [ref=e486] [cursor=pointer]
+            - button [ref=e489] [cursor=pointer]

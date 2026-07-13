@@ -1,14 +1,14 @@
 import { Command } from "commander";
 import {
   StateManager,
+  ChapterApplicationService,
+  ProjectChapterAuthorityResolver,
   detectChapter,
   loadDetectionHistory,
   analyzeDetectionInsights,
   type DetectionConfig,
 } from "@actalk/inkos-core";
 import { loadConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
-import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
 
 export const detectCommand = new Command("detect")
   .description("Run AIGC detection on chapters")
@@ -40,6 +40,10 @@ export const detectCommand = new Command("detect")
 
       const state = new StateManager(root);
       const bookDir = state.bookDir(bookId);
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
 
       if (opts.stats) {
         const history = await loadDetectionHistory(bookDir);
@@ -67,20 +71,20 @@ export const detectCommand = new Command("detect")
       const detectionConfig = config.detection as DetectionConfig;
 
       if (opts.all) {
-        const index = await state.loadChapterIndex(bookId);
-        for (const ch of index) {
-          const content = await readChapterContent(bookDir, ch.number);
-          const result = await detectChapter(detectionConfig, content, ch.number);
+        const snapshot = await chapterService.exportSnapshot(bookId);
+        for (const chapter of snapshot.chapters) {
+          const result = await detectChapter(detectionConfig, chapter.body, chapter.number);
           printResult(result, opts.json);
         }
       } else {
-        const targetChapter = chapterNumber ?? (await state.getNextChapterNumber(bookId)) - 1;
-        if (targetChapter < 1) {
+        const chapter = chapterNumber
+          ? await chapterService.get(bookId, chapterNumber)
+          : await chapterService.latest(bookId);
+        if (!chapter) {
           logError("No chapters to detect.");
           process.exit(1);
         }
-        const content = await readChapterContent(bookDir, targetChapter);
-        const result = await detectChapter(detectionConfig, content, targetChapter);
+        const result = await detectChapter(detectionConfig, chapter.body, chapter.number);
         printResult(result, opts.json);
       }
     } catch (e) {
@@ -101,16 +105,3 @@ function printResult(
   }
 }
 
-async function readChapterContent(bookDir: string, chapterNumber: number): Promise<string> {
-  const chaptersDir = join(bookDir, "chapters");
-  const files = await readdir(chaptersDir);
-  const paddedNum = String(chapterNumber).padStart(4, "0");
-  const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-  if (!chapterFile) {
-    throw new Error(`Chapter ${chapterNumber} file not found`);
-  }
-  const raw = await readFile(join(chaptersDir, chapterFile), "utf-8");
-  const lines = raw.split("\n");
-  const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
-  return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
-}

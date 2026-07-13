@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://hybrid.local/schemas/chapter-search-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "revision", "index_revision", "stale", "query", "total_count", "items", "page"],
+  "properties": {
+    "project_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 0}, "index_revision": {"type": "integer", "minimum": 0}, "stale": {"const": false}, "query": {"type": "string"}, "total_count": {"type": "integer", "minimum": 0},
+    "items": {"type": "array", "items": {"allOf": [{"$ref": "chapter-collection-response.json#/$defs/item"}, {"type": "object", "required": ["body", "snippet"], "properties": {"body": {"type": "string"}, "snippet": {"type": "string"}}}], "unevaluatedProperties": false}},
+    "page": {"$ref": "chapter-collection-response.json#/$defs/page"}
+  }
+}

@@ -1,0 +1,25 @@
+Hybrid Story System
+Copyright notices and source provenance for distribution
+
+This combined work is distributed under AGPL-3.0-only. The corresponding
+source archive, build instructions, modifications, and this NOTICE must be
+offered with every binary distribution.
+
+InkOS
+  Upstream: https://github.com/Narcooo/inkos.git
+  Recorded revision: fd87b04c3fbac7ab6ebc1b022fa117ee8051825e
+  License: AGPL-3.0-only
+  The original license text is distributed as licenses/INKOS-AGPL-3.0.txt.
+
+webnovel-writer provenance
+  Upstream: https://github.com/lingfengQAQ/webnovel-writer.git
+  Recorded revision: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+  License at recorded revision: GPL-3.0
+  Migration and compatibility work derived from or informed by this source is
+  listed path-by-path in story-runtime/UPSTREAM_PROVENANCE.yml. Original
+  copyright and license notices must be preserved.
+
+Third-party Python and Node dependencies retain their own copyrights and
+licenses. The release SBOM and license inventory are generated in CI and are
+part of the release bundle. No part of this NOTICE relicenses upstream code as
+MIT, Apache-2.0, or proprietary software.

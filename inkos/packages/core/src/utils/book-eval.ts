@@ -1,8 +1,8 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StateManager } from "../state/manager.js";
 import { analyzeAITells } from "../agents/ai-tells.js";
-import { computeAnalytics } from "./analytics.js";
+import type { ChapterApplicationService } from "../chapter-application-service.js";
 
 export interface ChapterEval {
   readonly number: number;
@@ -31,6 +31,7 @@ export interface BookEval {
 
 export interface EvaluateBookQualityOptions {
   readonly state: StateManager;
+  readonly chapterService: Pick<ChapterApplicationService, "exportSnapshot" | "analytics">;
   readonly bookId: string;
   readonly chapters?: string;
 }
@@ -80,18 +81,15 @@ function computeHookResolveRate(content: string): number {
 
 export async function evaluateBookQuality(options: EvaluateBookQualityOptions): Promise<BookEval> {
   const { state, bookId } = options;
-  const index = await state.loadChapterIndex(bookId);
   const bookDir = state.bookDir(bookId);
-  const chaptersDir = join(bookDir, "chapters");
   const { start, end } = parseChapterRange(options.chapters);
-  const filteredIndex = index.filter((ch) => ch.number >= start && ch.number <= end);
-  const chapterFiles = await readdir(chaptersDir).catch(() => [] as string[]);
+  const snapshot = await options.chapterService.exportSnapshot(bookId, {
+    fromChapter: start, toChapter: Number.isFinite(end) ? end : undefined,
+  });
   const chapterEvals: ChapterEval[] = [];
 
-  for (const ch of filteredIndex) {
-    const paddedNum = String(ch.number).padStart(4, "0");
-    const file = chapterFiles.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-    const content = file ? await readFile(join(chaptersDir, file), "utf-8") : "";
+  for (const ch of snapshot.chapters) {
+    const content = ch.body;
     const aiTells = content ? analyzeAITells(content) : { issues: [] };
     const paragraphs = content
       .split(/\n\s*\n/)
@@ -106,7 +104,7 @@ export async function evaluateBookQuality(options: EvaluateBookQualityOptions): 
     chapterEvals.push({
       number: ch.number,
       title: ch.title,
-      wordCount: ch.wordCount,
+      wordCount: ch.characterCount,
       auditIssueCount: ch.auditIssues.length,
       aiTellCount: aiTells.issues.length,
       aiTellDensity: Math.round(aiTellDensity * 100) / 100,
@@ -117,8 +115,8 @@ export async function evaluateBookQuality(options: EvaluateBookQualityOptions): 
 
   const hooksContent = await readFile(join(bookDir, "story", "pending_hooks.md"), "utf-8").catch(() => "");
   const hookResolveRate = computeHookResolveRate(hooksContent);
-  const duplicateTitles = duplicateTitleCount(index.map((ch) => ch.title));
-  const analytics = computeAnalytics(bookId, index);
+  const duplicateTitles = duplicateTitleCount(snapshot.chapters.map((ch) => ch.title));
+  const analytics = await options.chapterService.analytics(bookId);
   const avgAiTellDensity = chapterEvals.length > 0
     ? chapterEvals.reduce((s, c) => s + c.aiTellDensity, 0) / chapterEvals.length
     : 0;
@@ -135,8 +133,8 @@ export async function evaluateBookQuality(options: EvaluateBookQualityOptions): 
 
   return {
     bookId,
-    totalChapters: filteredIndex.length,
-    totalWords: filteredIndex.reduce((s, c) => s + c.wordCount, 0),
+    totalChapters: snapshot.chapters.length,
+    totalWords: snapshot.chapters.reduce((s, c) => s + c.characterCount, 0),
     auditPassRate: analytics.auditPassRate,
     avgAiTellDensity: Math.round(avgAiTellDensity * 100) / 100,
     avgParagraphWarnings: Math.round(avgParagraphWarnings * 100) / 100,

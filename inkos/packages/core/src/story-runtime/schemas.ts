@@ -188,10 +188,65 @@ export const TypedDiffResultSchema = z.object({
 }).strict();
 
 export const ChapterArtifactResultSchema = z.object({
-  project_id: z.string(), chapter_number: z.number().int().positive(), revision: z.number().int().positive(),
+  project_id: z.string(), chapter_id: z.string().uuid(), chapter_number: z.number().int().positive(), revision: z.number().int().positive(),
   commit_id: z.string().uuid(), title: z.string(), body: z.string(), summary: z.string(),
   body_sha256: z.string().regex(/^[a-f0-9]{64}$/), artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  volume_id: z.string().nullable(), created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }),
   finalized_at: z.string().datetime({ offset: true }),
+}).strict();
+
+export const ChapterListItemSchema = z.object({
+  chapter_id: z.string().uuid(), chapter_number: z.number().int().positive(),
+  order_key: z.number().int().positive(), state: z.literal("FINALIZED"),
+  title: z.string(), summary: z.string(),
+  body_sha256: z.string().regex(/^[a-f0-9]{64}$/), artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  character_count: z.number().int().nonnegative(), commit_id: z.string().uuid(),
+  resulting_revision: z.number().int().positive(), volume_id: z.string().nullable(),
+  created_at: z.string().datetime({ offset: true }), updated_at: z.string().datetime({ offset: true }),
+  finalized_at: z.string().datetime({ offset: true }),
+}).strict();
+
+export const ChapterCollectionSchema = z.object({
+  project_id: z.string(), revision: z.number().int().nonnegative(), finalized_only: z.literal(true),
+  total_count: z.number().int().nonnegative(), latest_chapter: z.number().int().nonnegative(),
+  items: z.array(ChapterListItemSchema), page: PageInfoSchema,
+}).strict();
+
+export const ChapterAggregateItemSchema = z.object({
+  chapter_number: z.number().int().positive(), character_count: z.number().int().nonnegative(),
+  volume_id: z.string().nullable(), created_at: z.string().datetime({ offset: true }),
+  updated_at: z.string().datetime({ offset: true }), finalized_at: z.string().datetime({ offset: true }),
+}).strict();
+
+export const ChapterAggregateSchema = z.object({
+  project_id: z.string(), revision: z.number().int().nonnegative(),
+  chapter_count: z.number().int().nonnegative(), latest_chapter: z.number().int().nonnegative(),
+  total_characters: z.number().int().nonnegative(), chapters: z.array(ChapterAggregateItemSchema),
+  volumes: z.array(z.object({
+    volume_id: z.string(), chapter_count: z.number().int().nonnegative(), character_count: z.number().int().nonnegative(),
+  }).strict()),
+}).strict();
+
+export const ChapterExportItemSchema = ChapterListItemSchema.extend({ body: z.string() }).strict();
+export const ChapterExportRequestSchema = z.object({
+  expected_revision: z.number().int().nonnegative().nullable().optional(),
+  from_chapter: z.number().int().positive().nullable().optional(),
+  to_chapter: z.number().int().positive().nullable().optional(),
+  volume_id: z.string().nullable().optional(),
+  finalized_only: z.literal(true),
+}).strict();
+export const ChapterExportSnapshotSchema = z.object({
+  snapshot_id: z.string(), project_id: z.string(), revision: z.number().int().nonnegative(),
+  finalized_only: z.literal(true), collection_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  chapter_count: z.number().int().nonnegative(), chapters: z.array(ChapterExportItemSchema),
+  created_at: z.string().datetime({ offset: true }),
+}).strict();
+
+export const ChapterSearchSchema = z.object({
+  project_id: z.string(), revision: z.number().int().nonnegative(), index_revision: z.number().int().nonnegative(),
+  stale: z.literal(false), query: z.string(), total_count: z.number().int().nonnegative(),
+  items: z.array(ChapterExportItemSchema.extend({ snippet: z.string() }).strict()), page: PageInfoSchema,
 }).strict();
 
 export const ContextLayerNameSchema = z.enum([
@@ -297,5 +352,12 @@ export type FinalizedCommitResult = z.infer<typeof FinalizedCommitResultSchema>;
 export type TypedDiffResult = z.infer<typeof TypedDiffResultSchema>;
 export type ProjectCreatedResult = z.infer<typeof ProjectCreatedResultSchema>;
 export type ChapterArtifactResult = z.infer<typeof ChapterArtifactResultSchema>;
+export type ChapterListItem = z.infer<typeof ChapterListItemSchema>;
+export type ChapterCollection = z.infer<typeof ChapterCollectionSchema>;
+export type ChapterAggregate = z.infer<typeof ChapterAggregateSchema>;
+export type ChapterExportRequest = z.infer<typeof ChapterExportRequestSchema>;
+export type ChapterExportItem = z.infer<typeof ChapterExportItemSchema>;
+export type ChapterExportSnapshot = z.infer<typeof ChapterExportSnapshotSchema>;
+export type ChapterSearch = z.infer<typeof ChapterSearchSchema>;
 export type LegacyMigrationJob = z.infer<typeof LegacyMigrationJobSchema>;
 export type LegacyMigrationJobList = z.infer<typeof LegacyMigrationJobListSchema>;

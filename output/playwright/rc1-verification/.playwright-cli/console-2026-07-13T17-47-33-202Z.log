@@ -1,0 +1,4 @@
+[  350055ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://127.0.0.1:45967/api/v1/events:0
+[  401480ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://127.0.0.1:45967/api/v1/events:0
+[  568191ms] [ERROR] Failed to load resource: the server responded with a status of 503 (Service Unavailable) @ http://127.0.0.1:45967/api/v1/books:0
+[  568195ms] [ERROR] Failed to load resource: the server responded with a status of 503 (Service Unavailable) @ http://127.0.0.1:45967/api/v1/books:0

@@ -32,6 +32,7 @@ import type { ChapterMemo, ContextPackage, RuleStack } from "../models/input-gov
 import type { ContextCompressionCallback } from "../models/context-compression.js";
 import type { StoryRuntimeConfig } from "../story-runtime/schemas.js";
 import { StoryRuntimeClient } from "../story-runtime/client.js";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { buildWritingMethodologySection } from "../utils/writing-methodology.js";
@@ -234,12 +235,17 @@ export interface InitBookOptions {
 export class PipelineRunner {
   private readonly state: StateManager;
   private readonly config: PipelineConfig;
+  private readonly chapters: ChapterApplicationService;
   private readonly agentClients = new Map<string, LLMClient>();
   private readonly operationContext = new AsyncLocalStorage<{ readonly signal?: AbortSignal }>();
 
   constructor(config: PipelineConfig) {
     this.config = config;
     this.state = new StateManager(config.projectRoot);
+    this.chapters = new ChapterApplicationService(new ProjectChapterAuthorityResolver(this.state, {
+      storyRuntime: config.storyRuntime,
+      apiToken: config.storyRuntime?.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+    }));
   }
 
   async runWithAbortSignal<T>(
@@ -753,12 +759,13 @@ export class PipelineRunner {
   async auditDraft(bookId: string, chapterNumber?: number): Promise<AuditResult & { readonly chapterNumber: number }> {
     const book = await this.state.loadBookConfig(bookId);
     const bookDir = this.state.bookDir(bookId);
-    const targetChapter = chapterNumber ?? (await this.state.getNextChapterNumber(bookId)) - 1;
-    if (targetChapter < 1) {
+    const chapter = chapterNumber ? await this.chapters.get(bookId, chapterNumber) : await this.chapters.latest(bookId);
+    if (!chapter) {
       throw new Error(`No chapters to audit for "${bookId}"`);
     }
+    const targetChapter = chapter.number;
 
-    const content = await this.readChapterContent(bookDir, targetChapter);
+    const content = chapter.body;
     const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
     const { profile: gp } = await this.loadGenreProfile(book.genre);
     const language = book.language ?? gp.language;
@@ -826,9 +833,13 @@ export class PipelineRunner {
   /** Get book status overview. */
   async getBookStatus(bookId: string): Promise<BookStatusInfo> {
     const book = await this.state.loadBookConfig(bookId);
-    const chapters = await this.state.loadChapterIndex(bookId);
-    const nextChapter = await this.state.getNextChapterNumber(bookId);
-    const totalWords = chapters.reduce((sum, ch) => sum + ch.wordCount, 0);
+    const [chapterPage, analytics] = await Promise.all([this.chapters.listAll(bookId), this.chapters.analytics(bookId)]);
+    const chapters: ChapterMeta[] = chapterPage.items.map((chapter) => ({
+      number: chapter.number, title: chapter.title,
+      status: chapter.status === "finalized" ? "published" : chapter.status as ChapterMeta["status"],
+      wordCount: chapter.characterCount, createdAt: chapter.createdAt, updatedAt: chapter.updatedAt,
+      auditIssues: [...chapter.auditIssues], lengthWarnings: [],
+    }));
 
     return {
       bookId,
@@ -837,8 +848,8 @@ export class PipelineRunner {
       platform: book.platform,
       status: book.status,
       chaptersWritten: chapters.length,
-      totalWords,
-      nextChapter,
+      totalWords: analytics.totalWords,
+      nextChapter: chapterPage.latestChapter + 1,
       chapters: [...chapters],
     };
   }
@@ -1064,11 +1075,11 @@ export class PipelineRunner {
     // 4. Save the final chapter and truth files from a single persistence source
     this.logStage(stageLanguage, { zh: "落盘最终章节", en: "persisting final chapter" });
     this.logStage(stageLanguage, { zh: "生成最终真相文件", en: "rebuilding final truth files" });
-    const chapterIndexBeforePersist = await this.state.loadChapterIndex(bookId);
+    const chapterIndexBeforePersist = await this.chapters.listAll(bookId);
     const { resolveDuplicateTitle } = await import("../agents/post-write-validator.js");
     const initialTitleResolution = resolveDuplicateTitle(
       output.title,
-      chapterIndexBeforePersist.map((chapter) => chapter.title),
+      chapterIndexBeforePersist.items.map((chapter) => chapter.title),
       pipelineLang,
       { content: finalContent },
     );
@@ -1086,7 +1097,7 @@ export class PipelineRunner {
     );
     const finalTitleResolution = resolveDuplicateTitle(
       persistenceOutput.title,
-      chapterIndexBeforePersist.map((chapter) => chapter.title),
+      chapterIndexBeforePersist.items.map((chapter) => chapter.title),
       pipelineLang,
       { content: finalContent },
     );
@@ -1198,14 +1209,11 @@ export class PipelineRunner {
         detectParagraphLengthDrift,
         detectParagraphShapeWarnings,
       } = await import("../agents/post-write-validator.js");
-      const chapDir = join(bookDir, "chapters");
-      const recentFiles = (await readdir(chapDir).catch(() => [] as string[]))
-        .filter((f) => f.endsWith(".md") && /^\d{4}/.test(f))
-        .sort()
-        .slice(-5);
-      const recentContent = (await Promise.all(
-        recentFiles.map((f) => readFile(join(chapDir, f), "utf-8").catch(() => "")),
-      )).join("\n\n");
+      const summary = await this.chapters.summary(bookId);
+      const recentSnapshot = summary.latestChapter > 0
+        ? await this.chapters.exportSnapshot(bookId, { fromChapter: Math.max(1, summary.latestChapter - 4), toChapter: summary.latestChapter })
+        : null;
+      const recentContent = recentSnapshot?.chapters.map((chapter) => chapter.body).join("\n\n") ?? "";
       const paragraphIssues = [
         ...detectParagraphShapeWarnings(finalContent, pipelineLang),
         ...detectParagraphLengthDrift(finalContent, recentContent, pipelineLang),
@@ -1598,34 +1606,15 @@ ${matrix}`,
     await writeFile(join(storyDir, "parent_canon.md"), canon, "utf-8");
 
     // Also generate style guide from parent's chapter text if available
-    const parentChaptersDir = join(parentDir, "chapters");
-    const parentChapterText = await this.readParentChapterSample(parentChaptersDir);
+    const parentChapterText = (await this.chapters.exportSnapshot(parentBookId, { fromChapter: 1, toChapter: 5 }))
+      .chapters.map((chapter) => chapter.body)
+      .join("\n\n---\n\n")
+      .slice(0, 20_000);
     if (parentChapterText.length >= 500) {
       await this.tryGenerateStyleGuide(targetBookId, parentChapterText, parentBook.title);
     }
 
     return canon;
-  }
-
-  private async readParentChapterSample(chaptersDir: string): Promise<string> {
-    try {
-      const entries = await readdir(chaptersDir);
-      const mdFiles = entries
-        .filter((file) => file.endsWith(".md"))
-        .sort()
-        .slice(0, 5);
-      const chunks: string[] = [];
-      let totalLength = 0;
-      for (const file of mdFiles) {
-        if (totalLength >= 20000) break;
-        const content = await readFile(join(chaptersDir, file), "utf-8");
-        chunks.push(content);
-        totalLength += content.length;
-      }
-      return chunks.join("\n\n---\n\n");
-    } catch {
-      return "";
-    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1698,8 +1687,7 @@ ${matrix}`,
   }
 
   private async assertNoPendingStateRepair(bookId: string): Promise<void> {
-    const existingIndex = await this.state.loadChapterIndex(bookId);
-    const latestChapter = [...existingIndex].sort((left, right) => right.number - left.number)[0];
+    const latestChapter = await this.chapters.latest(bookId);
     if (latestChapter?.status !== "state-degraded") {
       return;
     }
@@ -2048,18 +2036,4 @@ ${matrix}`,
     });
   }
 
-  private async readChapterContent(bookDir: string, chapterNumber: number): Promise<string> {
-    const chaptersDir = join(bookDir, "chapters");
-    const files = await readdir(chaptersDir);
-    const paddedNum = String(chapterNumber).padStart(4, "0");
-    const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-    if (!chapterFile) {
-      throw new Error(`Chapter ${chapterNumber} file not found in ${chaptersDir}`);
-    }
-    const raw = await readFile(join(chaptersDir, chapterFile), "utf-8");
-    // Strip the title line
-    const lines = raw.split("\n");
-    const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
-    return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
-  }
 }

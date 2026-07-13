@@ -1,0 +1,21 @@
+{
+  "name": "RC-1 Verification",
+  "version": "0.1.0",
+  "language": "zh",
+  "llm": {
+    "provider": "openai",
+    "baseUrl": "http://127.0.0.1:9/v1",
+    "apiKey": "",
+    "model": "verification-no-llm"
+  },
+  "notify": [],
+  "storyRuntime": {
+    "mode": "story-runtime",
+    "baseUrl": "http://127.0.0.1:47931",
+    "apiTokenEnv": "RC1_VERIFICATION_TOKEN",
+    "timeoutMs": 500,
+    "maxContextTokens": 16000,
+    "maxItems": 100,
+    "fallbackOnUnavailable": false
+  }
+}

@@ -1,0 +1,12 @@
+[
+  {
+    "number": 1,
+    "title": "Legacy One",
+    "status": "approved",
+    "wordCount": 14,
+    "createdAt": "2026-07-14T00:00:00.000Z",
+    "updatedAt": "2026-07-14T00:00:00.000Z",
+    "auditIssues": [],
+    "lengthWarnings": []
+  }
+]

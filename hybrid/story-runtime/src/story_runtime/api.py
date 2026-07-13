@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from typing import Annotated, Union
+import hashlib
+import time
+from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -9,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from .config import RuntimeConfig
 from .chapter_commits import ChapterCommitService
+from .chapter_reads import ChapterReadService
 from .contracts import (
     AppendEventsRequest, AppendEventsResult, TypedDiffCommandRequest, ChapterArtifactResult, CommitChapterRequest, ContextQueryResult, DoctorResult,
     CreateProjectRequest, EntityResult, ErrorResponse, ExportSnapshotRequest, FinalizedCommitResult, HealthResponse,
@@ -23,6 +27,8 @@ from .contracts import (
     RecoveryPreviewRequest, ReviewOverview, RuntimeConfigurationStatus, RuntimeOverview,
     CreateMigrationJobRequest, MigrationActionRequest, MigrationDecisionsRequest,
     MigrationJobListResult, MigrationJobResult,
+    ChapterAggregateResult, ChapterCollectionResult, ChapterExportRequest,
+    ChapterExportSnapshotResult, ChapterSearchResult,
 )
 from .database import Database
 from .errors import ConflictError, FeatureDisabledError, NotFoundError, RuntimeErrorBase
@@ -32,6 +38,7 @@ from .outbox import OutboxWorker
 from .reviews import ReviewService
 from .observability import ObservabilityService, RecoveryService, redact, redact_text
 from .migration_jobs import LegacyMigrationService
+from .runtime_logging import configure_runtime_logging
 
 API_PREFIX = "/api/story-runtime/v1"
 WRITE_RESPONSES = {
@@ -54,17 +61,79 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     repository = StoryRepository(database)
     services = RuntimeServices(database, repository)
     commits = ChapterCommitService(database, unified_review_enabled=config.unified_review_enabled)
+    chapter_reads = ChapterReadService(database)
     app = FastAPI(title="Hybrid Story Runtime API", version="0.1.0", docs_url="/docs", redoc_url=None)
     app.state.config = config
     app.state.database = database
     app.state.repository = repository
     app.state.services = services
     app.state.commits = commits
+    app.state.chapter_reads = chapter_reads
     app.state.outbox = OutboxWorker(database)
     app.state.reviews = ReviewService(database)
     app.state.observability = ObservabilityService(database, repository)
     app.state.recovery = RecoveryService(database, repository)
     app.state.migration_jobs = LegacyMigrationService(database, config)
+    logger = configure_runtime_logging(config.log_path, config.log_max_bytes, config.log_backups)
+
+    @app.middleware("http")
+    async def request_observability(request: Request, call_next):
+        request_id = request.headers.get("x-request-id") or str(uuid4())
+        started = time.perf_counter()
+
+        def payload_too_large_response() -> JSONResponse:
+            logger.warning("runtime request rejected", extra={
+                "request_id": request_id, "operation": f"{request.method} <payload-rejected>",
+                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                "result": 413, "retryability": False, "error_code": "PAYLOAD_TOO_LARGE",
+            })
+            return JSONResponse(
+                status_code=413,
+                content={"code": "PAYLOAD_TOO_LARGE", "message": "request body exceeds the configured limit", "retryable": False},
+                headers={"x-request-id": request_id},
+            )
+
+        content_length = request.headers.get("content-length")
+        if content_length and content_length.isdecimal() and int(content_length) > config.max_request_bytes:
+            return payload_too_large_response()
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            received = 0
+            chunks: list[bytes] = []
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > config.max_request_bytes:
+                    return payload_too_large_response()
+                chunks.append(chunk)
+            request._body = b"".join(chunks)
+
+        def log_context() -> dict[str, str | None]:
+            project_id = request.path_params.get("project_id")
+            route = request.scope.get("route")
+            route_path = getattr(route, "path", None)
+            return {
+                "project_id": hashlib.sha256(project_id.encode()).hexdigest()[:12] if project_id else None,
+                "commit_id": request.path_params.get("commit_id"),
+                "operation": f"{request.method} {route_path or '<unmatched>'}",
+            }
+
+        try:
+            response = await call_next(request)
+            duration_ms = round((time.perf_counter() - started) * 1000, 3)
+            context = log_context()
+            logger.info("runtime request", extra={
+                "request_id": request_id, **context, "duration_ms": duration_ms,
+                "result": response.status_code, "retryability": response.status_code in {409, 423, 429, 503},
+            })
+            response.headers["x-request-id"] = request_id
+            return response
+        except Exception:
+            duration_ms = round((time.perf_counter() - started) * 1000, 3)
+            context = log_context()
+            logger.exception("unhandled runtime request failure", extra={
+                "request_id": request_id, **context, "duration_ms": duration_ms,
+                "result": 500, "retryability": False, "error_code": "UNHANDLED_ERROR",
+            })
+            raise
 
     def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
         if authorization != f"Bearer {config.local_token}":
@@ -220,6 +289,43 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
         if chapter_number < 1:
             raise NotFoundError("CHAPTER_NOT_FOUND", f"finalized chapter not found: {chapter_number}")
         return commits.chapter(project_id, chapter_number)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters", response_model=ChapterCollectionResult, operation_id="listFinalizedChapters", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
+    def finalized_chapters(
+        project_id: str,
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+        from_chapter: Annotated[int | None, Query(ge=1)] = None,
+        to_chapter: Annotated[int | None, Query(ge=1)] = None,
+        volume_id: str | None = None,
+        finalized_only: bool = True,
+    ) -> ChapterCollectionResult:
+        return chapter_reads.collection(
+            project_id,
+            cursor=cursor,
+            limit=limit,
+            from_chapter=from_chapter,
+            to_chapter=to_chapter,
+            volume_id=volume_id,
+            finalized_only=finalized_only,
+        )
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapter-aggregate", response_model=ChapterAggregateResult, operation_id="getChapterAggregate", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})
+    def chapter_aggregate(project_id: str) -> ChapterAggregateResult:
+        return chapter_reads.aggregate(project_id)
+
+    @app.post(f"{API_PREFIX}/projects/{{project_id}}/chapter-export", response_model=ChapterExportSnapshotResult, operation_id="createChapterExportSnapshot", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
+    def chapter_export(project_id: str, body: ChapterExportRequest) -> ChapterExportSnapshotResult:
+        return chapter_reads.export_snapshot(project_id, body)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapter-search", response_model=ChapterSearchResult, operation_id="searchFinalizedChapters", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
+    def chapter_search(
+        project_id: str,
+        q: Annotated[str, Query(min_length=1, max_length=500)],
+        cursor: str | None = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> ChapterSearchResult:
+        return chapter_reads.search(project_id, q, cursor=cursor, limit=limit)
 
     def disabled(_body: WriteRequest) -> None:
         raise FeatureDisabledError(

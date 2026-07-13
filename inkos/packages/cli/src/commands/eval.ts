@@ -1,9 +1,11 @@
 import { Command } from "commander";
 import {
   StateManager,
+  ChapterApplicationService,
+  ProjectChapterAuthorityResolver,
   evaluateBookQuality,
 } from "@actalk/inkos-core";
-import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { findProjectRoot, loadConfig, resolveBookId, log, logError } from "../utils.js";
 
 export const evalCommand = new Command("eval")
   .description("Evaluate writing quality for a book — outputs structured quality report")
@@ -15,7 +17,12 @@ export const evalCommand = new Command("eval")
       const root = findProjectRoot();
       const bookId = await resolveBookId(bookIdArg, root);
       const state = new StateManager(root);
-      const result = await evaluateBookQuality({ state, bookId, chapters: opts.chapters });
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
+      const result = await evaluateBookQuality({ state, chapterService, bookId, chapters: opts.chapters });
 
       if (opts.json) {
         log(JSON.stringify(result, null, 2));

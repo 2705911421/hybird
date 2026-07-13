@@ -1,3 +1,3 @@
-from .cli import main
+from story_runtime.cli import main
 
 raise SystemExit(main())

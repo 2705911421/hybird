@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/chapter-collection-response.json",
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["chapter_id", "chapter_number", "order_key", "state", "title", "summary", "body_sha256", "artifact_sha256", "character_count", "commit_id", "resulting_revision", "volume_id", "created_at", "updated_at", "finalized_at"],
+      "properties": {
+        "chapter_id": {"type": "string", "format": "uuid"}, "chapter_number": {"type": "integer", "minimum": 1}, "order_key": {"type": "integer", "minimum": 1},
+        "state": {"const": "FINALIZED"}, "title": {"type": "string"}, "summary": {"type": "string"},
+        "body_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "character_count": {"type": "integer", "minimum": 0}, "commit_id": {"type": "string", "format": "uuid"}, "resulting_revision": {"type": "integer", "minimum": 1},
+        "volume_id": {"type": ["string", "null"]}, "created_at": {"type": "string", "format": "date-time"}, "updated_at": {"type": "string", "format": "date-time"}, "finalized_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "page": {
+      "type": "object", "additionalProperties": false, "required": ["limit", "has_more", "next_cursor"],
+      "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 100}, "has_more": {"type": "boolean"}, "next_cursor": {"type": ["string", "null"]}}
+    }
+  },
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "revision", "finalized_only", "total_count", "latest_chapter", "items", "page"],
+  "properties": {
+    "project_id": {"type": "string"}, "revision": {"type": "integer", "minimum": 0}, "finalized_only": {"const": true},
+    "total_count": {"type": "integer", "minimum": 0}, "latest_chapter": {"type": "integer", "minimum": 0},
+    "items": {"type": "array", "items": {"allOf": [{"$ref": "#/$defs/item"}], "unevaluatedProperties": false}}, "page": {"$ref": "#/$defs/page"}
+  }
+}

@@ -1,0 +1,7 @@
+INFO:     Started server process [4744]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:47931 (Press CTRL+C to quit)
+{"timestamp":"2026-07-14T01:56:22+0800","level":"info","message":"runtime request","version":"0.1.0","schema_version":"story-runtime/v1","request_id":"ba00595d-e734-4347-a203-16a84378fbe4","project_id":"9a95d33a43e5","operation":"GET /api/story-runtime/v1/projects/{project_id}/chapter-aggregate","duration_ms":27.169,"result":200,"retryability":false}
+{"timestamp":"2026-07-14T01:56:22+0800","level":"info","message":"runtime request","version":"0.1.0","schema_version":"story-runtime/v1","request_id":"d14e02e2-74a2-4cc5-889c-c38fa347e7a7","operation":"GET /api/story-runtime/v1/health","duration_ms":42.045,"result":200,"retryability":false}
+{"timestamp":"2026-07-14T01:56:22+0800","level":"info","message":"runtime request","version":"0.1.0","schema_version":"story-runtime/v1","request_id":"853cd2a1-c952-4a55-b4c6-26845c858b06","project_id":"9a95d33a43e5","operation":"GET /api/story-runtime/v1/projects/{project_id}/chapter-aggregate","duration_ms":9.808,"result":200,"retryability":false}

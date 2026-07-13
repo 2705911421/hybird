@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://hybrid.local/schemas/chapter-export-request.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["expected_revision", "from_chapter", "to_chapter", "volume_id", "finalized_only"],
+  "properties": {"expected_revision": {"type": ["integer", "null"], "minimum": 0}, "from_chapter": {"type": ["integer", "null"], "minimum": 1}, "to_chapter": {"type": ["integer", "null"], "minimum": 1}, "volume_id": {"type": ["string", "null"]}, "finalized_only": {"const": true}}
+}

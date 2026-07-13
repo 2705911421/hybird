@@ -1,0 +1,26 @@
+name: RC-1 chapter authority
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  authority-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: inkos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: inkos/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:chapter-authority
+      - run: pnpm --filter @actalk/inkos-core typecheck
+      - run: pnpm --filter @actalk/inkos-core test -- chapter-application-service.test.ts

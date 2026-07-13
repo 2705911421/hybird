@@ -1,0 +1,23 @@
+name: phase9-24h-soak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 0"
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1500
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: python -m pip install -e "hybrid/story-runtime[test]"
+      - run: python scripts/soak.py --hours 24 --interval 1 --scale million --output phase9-soak-24h.json
+        working-directory: hybrid/story-runtime
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase9-soak-24h
+          path: hybrid/story-runtime/phase9-soak-24h.json

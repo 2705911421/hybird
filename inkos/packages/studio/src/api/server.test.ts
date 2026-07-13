@@ -24,6 +24,26 @@ const loadBookConfigMock = vi.fn();
 const createLLMClientMock = vi.fn(() => ({}));
 const chatCompletionMock = vi.fn();
 const loadProjectConfigMock = vi.fn();
+type MockChapterItem = {
+  chapterId: string;
+  number: number;
+  orderKey: number;
+  title: string;
+  status: string;
+  summary: string;
+  body: string;
+  bodyChecksum: string;
+  artifactChecksum: string;
+  characterCount: number;
+  resultingRevision: number;
+  createdAt: string;
+  updatedAt: string;
+  finalizedAt: string;
+  auditIssues: unknown[];
+};
+const chapterServiceFixtureMock: {
+  current?: { projectRevision: number; collectionChecksum: string; items: MockChapterItem[] };
+} = {};
 const pipelineConfigs: unknown[] = [];
 const processProjectInteractionRequestMock = vi.fn();
 const createInteractionToolsFromDepsMock = vi.fn(() => ({}));
@@ -231,13 +251,74 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     }
   }
 
+  class MockProjectChapterAuthorityResolver {}
+
+  class MockChapterApplicationService {
+    constructor(_resolver: unknown) {}
+
+    private async items(bookId: string) {
+      if (chapterServiceFixtureMock.current) return chapterServiceFixtureMock.current.items;
+      const index = await loadChapterIndexMock(bookId) as Array<Record<string, unknown>>;
+      return index.map((chapter, position) => ({
+        chapterId: `test:${bookId}:${chapter.number ?? position + 1}`,
+        number: chapter.number ?? position + 1,
+        orderKey: chapter.number ?? position + 1,
+        title: chapter.title ?? `Chapter ${position + 1}`,
+        status: chapter.status ?? "finalized",
+        summary: "",
+        body: String(chapter.body ?? ""),
+        bodyChecksum: "0".repeat(64), artifactChecksum: "0".repeat(64),
+        characterCount: chapter.wordCount ?? 0, resultingRevision: position + 1,
+        createdAt: chapter.createdAt ?? new Date().toISOString(),
+        updatedAt: chapter.updatedAt ?? new Date().toISOString(),
+        finalizedAt: chapter.updatedAt ?? new Date().toISOString(), auditIssues: chapter.auditIssues ?? [],
+      }));
+    }
+
+    async summary(bookId: string) {
+      const items = await this.items(bookId);
+      return { authority: chapterServiceFixtureMock.current ? "runtime" : "legacy", projectRevision: chapterServiceFixtureMock.current?.projectRevision ?? 0, chapterCount: items.length, latestChapter: items.at(-1)?.number ?? 0, totalCharacters: items.reduce((sum, item) => sum + Number(item.characterCount), 0), chapters: [], volumes: [] };
+    }
+
+    async list(bookId: string) {
+      const items = await this.items(bookId);
+      return { authority: chapterServiceFixtureMock.current ? "runtime" : "legacy", projectRevision: chapterServiceFixtureMock.current?.projectRevision ?? 0, totalCount: items.length, latestChapter: items.at(-1)?.number ?? 0, items, hasMore: false };
+    }
+
+    async get(bookId: string, chapter: number) {
+      const item = (await this.items(bookId)).find((candidate) => candidate.number === chapter);
+      if (!item) throw new Error("Chapter not found");
+      return item;
+    }
+
+    async analytics(bookId: string) {
+      const items = await this.items(bookId);
+      return { bookId, totalChapters: items.length, totalWords: items.reduce((sum, item) => sum + Number(item.characterCount), 0), avgWordsPerChapter: 0, auditPassRate: 100, topIssueCategories: [], chaptersWithMostIssues: [], statusDistribution: {}, authority: chapterServiceFixtureMock.current ? "runtime" : "legacy", projectRevision: chapterServiceFixtureMock.current?.projectRevision ?? 0, stale: false };
+    }
+
+    async exportSnapshot(bookId: string) {
+      return { authority: chapterServiceFixtureMock.current ? "runtime" : "legacy", snapshotId: `test:${bookId}:${chapterServiceFixtureMock.current?.projectRevision ?? 0}`, projectRevision: chapterServiceFixtureMock.current?.projectRevision ?? 0, collectionChecksum: chapterServiceFixtureMock.current?.collectionChecksum ?? "0".repeat(64), chapters: await this.items(bookId), createdAt: new Date().toISOString() };
+    }
+
+    async search(bookId: string, request: { query: string }) {
+      const items = await this.items(bookId);
+      const hits = items.filter((item) => `${item.title}\n${item.body}`.includes(request.query));
+      const revision = chapterServiceFixtureMock.current?.projectRevision ?? 0;
+      return { authority: chapterServiceFixtureMock.current ? "runtime" : "legacy", projectRevision: revision, indexRevision: revision, stale: false, query: request.query, totalCount: hits.length, latestChapter: items.at(-1)?.number ?? 0, items: hits, hasMore: false };
+    }
+  }
+
   return {
     StateManager: MockStateManager,
     PipelineRunner: MockPipelineRunner,
     Scheduler: MockScheduler,
+    ChapterApplicationService: MockChapterApplicationService,
+    ProjectChapterAuthorityResolver: MockProjectChapterAuthorityResolver,
+    ChapterApplicationError: actual.ChapterApplicationError,
     createLLMClient: createLLMClientMock,
     createLogger: vi.fn(() => logger),
     evaluateBookQuality: evaluateBookQualityMock,
+    buildExportArtifact: actual.buildExportArtifact,
     computeAnalytics: vi.fn(() => ({})),
     isSafeBookId: actual.isSafeBookId,
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
@@ -395,6 +476,7 @@ describe("createStudioServer daemon lifecycle", () => {
     rollbackToChapterMock.mockReset();
     saveChapterIndexMock.mockReset();
     loadChapterIndexMock.mockReset();
+    chapterServiceFixtureMock.current = undefined;
     loadBookConfigMock.mockReset();
     generatePlayImageMock.mockClear();
     await mkdir(join(root, "books", "demo-book", "chapters"), { recursive: true });
@@ -601,6 +683,77 @@ describe("createStudioServer daemon lifecycle", () => {
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
     await rm(join(tmpdir(), "inkos-global.env"), { force: true });
+  });
+
+  const localChapterVariants: Array<[string, Array<Record<string, unknown>> | null]> = [
+    ["local index says 0", []],
+    ["local index says 2", [{ number: 1 }, { number: 2 }]],
+    ["local index has a fake chapter 4", [{ number: 1 }, { number: 2 }, { number: 3 }, { number: 4, body: "Local fake body" }]],
+    ["local chapter body conflicts", [{ number: 2, body: "Local mismatched body" }]],
+    ["local chapter files are deleted", null],
+  ];
+
+  it.each(localChapterVariants)("uses the Runtime revision-7 fixture when %s", async (_label, localIndex) => {
+    const runtimeBodies = ["Runtime chapter one.", "Runtime \u7b2c\u4e8c\u7ae0.", "Runtime chapter three."];
+    const now = "2026-07-13T00:00:00.000Z";
+    chapterServiceFixtureMock.current = {
+      projectRevision: 7,
+      collectionChecksum: "7".repeat(64),
+      items: runtimeBodies.map((body, index) => ({
+        chapterId: `runtime-${index + 1}`,
+        number: index + 1,
+        orderKey: index + 1,
+        title: `Runtime Chapter ${index + 1}`,
+        status: "finalized",
+        summary: `Runtime summary ${index + 1}`,
+        body,
+        bodyChecksum: String(index + 1).repeat(64),
+        artifactChecksum: "a".repeat(64),
+        characterCount: [...body].length,
+        resultingRevision: 7,
+        createdAt: now,
+        updatedAt: now,
+        finalizedAt: now,
+        auditIssues: [],
+      })),
+    };
+    if (localIndex === null) {
+      await rm(join(root, "books", "demo-book", "chapters"), { recursive: true, force: true });
+      loadChapterIndexMock.mockRejectedValue(new Error("ENOENT"));
+    } else {
+      loadChapterIndexMock.mockResolvedValue(localIndex);
+    }
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const bookResponse = await app.request("http://localhost/api/v1/books/demo-book");
+    await expect(bookResponse.json()).resolves.toMatchObject({
+      totalCount: 3,
+      latestChapter: 3,
+      projectRevision: 7,
+      authority: "runtime",
+      chapters: [{ number: 1 }, { number: 2 }, { number: 3 }],
+    });
+
+    const detailResponse = await app.request("http://localhost/api/v1/books/demo-book/chapters/2");
+    await expect(detailResponse.json()).resolves.toMatchObject({
+      content: runtimeBodies[1],
+      chapter: { number: 2, body: runtimeBodies[1], bodyChecksum: "2".repeat(64) },
+    });
+
+    const analyticsResponse = await app.request("http://localhost/api/v1/books/demo-book/analytics");
+    await expect(analyticsResponse.json()).resolves.toMatchObject({ totalChapters: 3, authority: "runtime", projectRevision: 7 });
+
+    const searchResponse = await app.request(`http://localhost/api/v1/books/demo-book/chapter-search?q=${encodeURIComponent("\u7b2c\u4e8c\u7ae0")}`);
+    await expect(searchResponse.json()).resolves.toMatchObject({ totalCount: 1, projectRevision: 7, items: [{ number: 2, body: runtimeBodies[1] }] });
+
+    const exportResponse = await app.request("http://localhost/api/v1/books/demo-book/export?format=txt");
+    expect(exportResponse.status).toBe(200);
+    expect(exportResponse.headers.get("X-InkOS-Project-Revision")).toBe("7");
+    expect(exportResponse.headers.get("X-InkOS-Collection-SHA256")).toBe("7".repeat(64));
+    expect(await exportResponse.text()).toContain(runtimeBodies[1]);
+    expect(loadChapterIndexMock).not.toHaveBeenCalled();
   });
 
   it("uses the real core bookId validator in the Studio safety mock", async () => {

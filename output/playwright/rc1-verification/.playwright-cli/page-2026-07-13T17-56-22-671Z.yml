@@ -1,0 +1,60 @@
+- generic [ref=f2e3]:
+  - complementary [ref=f2e4]:
+    - button "InkOS InkOS Studio" [ref=f2e6] [cursor=pointer]:
+      - img "InkOS" [ref=f2e7]
+      - generic [ref=f2e16]:
+        - generic [ref=f2e17]: InkOS
+        - generic [ref=f2e18]: Studio
+    - generic [ref=f2e19]:
+      - generic [ref=f2e20]:
+        - generic [ref=f2e21]: 开始创作
+        - generic [ref=f2e22]:
+          - button "长篇小说" [ref=f2e23] [cursor=pointer]
+          - button "短篇小说" [ref=f2e28] [cursor=pointer]
+          - button "剧本创作" [ref=f2e34] [cursor=pointer]
+          - button "分镜创作" [ref=f2e42] [cursor=pointer]
+          - button "互动影游" [ref=f2e47] [cursor=pointer]
+          - button "同人创作" [ref=f2e52] [cursor=pointer]
+          - button "番外创作" [ref=f2e58] [cursor=pointer]
+          - button "仿写创作" [ref=f2e65] [cursor=pointer]
+          - button "续写创作" [ref=f2e71] [cursor=pointer]
+          - button "翻译译介" [ref=f2e78] [cursor=pointer]
+          - button "分支互动" [ref=f2e85] [cursor=pointer]
+          - button "开放世界" [ref=f2e92] [cursor=pointer]
+      - generic [ref=f2e97]:
+        - button "我的创作" [ref=f2e98] [cursor=pointer]
+        - generic [ref=f2e102]: 还没有书
+      - generic [ref=f2e106]:
+        - button "互动影游" [ref=f2e107] [cursor=pointer]
+        - generic [ref=f2e111]: 还没有互动影游项目
+      - generic [ref=f2e115]:
+        - button "会话记录" [ref=f2e116] [cursor=pointer]
+        - button "新建会话" [ref=f2e125] [cursor=pointer]
+      - generic [ref=f2e128]:
+        - generic [ref=f2e129]: 系统
+        - generic [ref=f2e130]:
+          - button "题材" [ref=f2e131] [cursor=pointer]
+          - button "模型配置" [ref=f2e144] [cursor=pointer]
+          - button "项目设置" [ref=f2e150] [cursor=pointer]
+          - button "守护进程" [ref=f2e156] [cursor=pointer]
+          - button "日志" [ref=f2e161] [cursor=pointer]
+      - generic [ref=f2e166]:
+        - generic [ref=f2e167]: 工具
+        - generic [ref=f2e168]:
+          - button "文风" [ref=f2e169] [cursor=pointer]
+          - button "导入" [ref=f2e175] [cursor=pointer]
+          - button "市场雷达" [ref=f2e182] [cursor=pointer]
+          - button "环境诊断" [ref=f2e188] [cursor=pointer]
+  - generic [ref=f2e195]:
+    - banner [ref=f2e196]:
+      - button "首页 / InkOS Studio" [ref=f2e198] [cursor=pointer]:
+        - generic [ref=f2e202]: 首页
+        - generic [ref=f2e203]: /
+        - generic [ref=f2e204]: InkOS Studio
+      - generic [ref=f2e205]:
+        - generic [ref=f2e206]:
+          - button "中" [ref=f2e207] [cursor=pointer]
+          - button "EN" [ref=f2e208] [cursor=pointer]
+        - button [ref=f2e209] [cursor=pointer]
+    - main [ref=f2e216]:
+      - generic [ref=f2e217]: Gathering manuscripts...

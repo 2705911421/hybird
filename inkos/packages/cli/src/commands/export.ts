@@ -1,7 +1,7 @@
 import { Command } from "commander";
-import { StateManager, writeExportArtifact } from "@actalk/inkos-core";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver, StateManager, writeExportArtifact } from "@actalk/inkos-core";
 import { join } from "node:path";
-import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { findProjectRoot, loadConfig, resolveBookId, log, logError } from "../utils.js";
 
 export const exportCommand = new Command("export")
   .description("Export book chapters to a single file")
@@ -15,8 +15,14 @@ export const exportCommand = new Command("export")
       const root = findProjectRoot();
       const bookId = await resolveBookId(bookIdArg, root);
       const state = new StateManager(root);
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
 
       const result = await writeExportArtifact(state, bookId, {
+        chapterService,
         format: opts.format as "txt" | "md" | "epub",
         approvedOnly: Boolean(opts.approvedOnly),
         outputPath: opts.output ?? join(root, `${bookId}_export.${opts.format}`),
@@ -29,6 +35,8 @@ export const exportCommand = new Command("export")
           totalWords: result.totalWords,
           format: result.format,
           outputPath: result.outputPath,
+          manifestPath: result.manifestPath,
+          projectRevision: result.projectRevision,
         }, null, 2));
       } else {
         log(`Exported ${result.chaptersExported} chapters (${result.totalWords} words)`);

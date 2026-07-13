@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import {
   ContextQueryResultSchema,
   ChapterArtifactResultSchema,
+  ChapterAggregateSchema,
+  ChapterCollectionSchema,
+  ChapterExportRequestSchema,
+  ChapterExportSnapshotSchema,
+  ChapterSearchSchema,
   HealthResponseSchema,
   ProjectStatusResponseSchema,
   ProjectCreatedResultSchema,
@@ -34,6 +39,10 @@ import {
   type ValidateChapterResult,
   type ProjectCreatedResult,
   type ChapterArtifactResult,
+  type ChapterAggregate,
+  type ChapterCollection,
+  type ChapterExportSnapshot,
+  type ChapterSearch,
   type RuntimeCommitDetail,
   type RuntimeCommitList,
   type RuntimeDiagnosticReport,
@@ -202,6 +211,57 @@ export class StoryRuntimeClient {
 
   finalizedChapter(projectId: string, chapterNumber: number): Promise<ChapterArtifactResult> {
     return this.request(`/api/story-runtime/v1/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}`, ChapterArtifactResultSchema);
+  }
+
+  finalizedChapters(projectId: string, query: {
+    readonly cursor?: string;
+    readonly limit?: number;
+    readonly fromChapter?: number;
+    readonly toChapter?: number;
+    readonly volumeId?: string;
+  } = {}): Promise<ChapterCollection> {
+    return this.request(`${this.projectPath(projectId)}/chapters${this.query({
+      cursor: query.cursor,
+      limit: query.limit,
+      from_chapter: query.fromChapter,
+      to_chapter: query.toChapter,
+      volume_id: query.volumeId,
+    })}`, ChapterCollectionSchema);
+  }
+
+  chapterAggregate(projectId: string): Promise<ChapterAggregate> {
+    return this.request(`${this.projectPath(projectId)}/chapter-aggregate`, ChapterAggregateSchema);
+  }
+
+  chapterExport(projectId: string, input: {
+    readonly expectedRevision?: number;
+    readonly fromChapter?: number;
+    readonly toChapter?: number;
+    readonly volumeId?: string;
+  } = {}): Promise<ChapterExportSnapshot> {
+    const request = ChapterExportRequestSchema.parse({
+      expected_revision: input.expectedRevision ?? null,
+      from_chapter: input.fromChapter ?? null,
+      to_chapter: input.toChapter ?? null,
+      volume_id: input.volumeId ?? null,
+      finalized_only: true,
+    });
+    return this.request(`${this.projectPath(projectId)}/chapter-export`, ChapterExportSnapshotSchema, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+  }
+
+  searchChapters(projectId: string, input: {
+    readonly query: string;
+    readonly cursor?: string;
+    readonly limit?: number;
+  }): Promise<ChapterSearch> {
+    return this.request(`${this.projectPath(projectId)}/chapter-search${this.query({
+      q: input.query,
+      cursor: input.cursor,
+      limit: input.limit,
+    })}`, ChapterSearchSchema);
   }
 
   createProject(input: { projectId: string; idempotencyKey: string }): Promise<ProjectCreatedResult> {

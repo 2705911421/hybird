@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { StateManager } from "../state/manager.js";
 import { evaluateBookQuality } from "../utils/book-eval.js";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
 
 describe("evaluateBookQuality", () => {
   let root = "";
@@ -41,7 +42,8 @@ describe("evaluateBookQuality", () => {
     await writeFile(join(bookDir, "chapters", "0002_第一章.md"), "# 第一章\n\n她沉默。\n\n然后转身。", "utf-8");
     await writeFile(join(bookDir, "story", "pending_hooks.md"), "| 伏笔 | 状态 |\n| --- | --- |\n| 旧信 | 已回收 |\n", "utf-8");
 
-    const report = await evaluateBookQuality({ state, bookId: book.id });
+    const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state));
+    const report = await evaluateBookQuality({ state, chapterService, bookId: book.id });
 
     expect(report).toMatchObject({
       bookId: "demo-book",

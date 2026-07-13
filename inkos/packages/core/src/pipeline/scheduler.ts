@@ -6,6 +6,7 @@ import type { QualityGates, DetectionConfig } from "../models/project.js";
 import { dispatchWebhookEvent } from "../notify/dispatcher.js";
 import { detectChapter, detectAndRewrite } from "./detection-runner.js";
 import type { Logger } from "../utils/logger.js";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
 
 export interface SchedulerConfig extends PipelineConfig {
   readonly radarCron: string;
@@ -32,6 +33,7 @@ export class Scheduler {
   private readonly pipeline: PipelineRunner;
   private readonly state: StateManager;
   private readonly config: SchedulerConfig;
+  private readonly chapters: ChapterApplicationService;
   private tasks: ScheduledTask[] = [];
   private running = false;
   private writeCycleInFlight: Promise<void> | null = null;
@@ -51,6 +53,10 @@ export class Scheduler {
     this.config = config;
     this.pipeline = new PipelineRunner(config);
     this.state = new StateManager(config.projectRoot);
+    this.chapters = new ChapterApplicationService(new ProjectChapterAuthorityResolver(this.state, {
+      storyRuntime: config.storyRuntime,
+      apiToken: config.storyRuntime?.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+    }));
     this.log = config.logger?.child("scheduler");
   }
 
@@ -266,7 +272,7 @@ export class Scheduler {
     if (!this.config.detection) return;
     try {
       const bookDir = this.state.bookDir(bookId);
-      const chapterContent = await this.readChapterContent(bookDir, chapterNumber);
+      const chapterContent = (await this.chapters.get(bookId, chapterNumber)).body;
       const detResult = await detectChapter(
         this.config.detection,
         chapterContent,
@@ -363,22 +369,6 @@ export class Scheduler {
         data: { dimension, failureCount: count },
       });
     }
-  }
-
-  private async readChapterContent(bookDir: string, chapterNumber: number): Promise<string> {
-    const { readFile, readdir } = await import("node:fs/promises");
-    const { join } = await import("node:path");
-    const chaptersDir = join(bookDir, "chapters");
-    const files = await readdir(chaptersDir);
-    const paddedNum = String(chapterNumber).padStart(4, "0");
-    const chapterFile = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-    if (!chapterFile) {
-      throw new Error(`Chapter ${chapterNumber} file not found in ${chaptersDir}`);
-    }
-    const raw = await readFile(join(chaptersDir, chapterFile), "utf-8");
-    const lines = raw.split("\n");
-    const contentStart = lines.findIndex((l, i) => i > 0 && l.trim().length > 0);
-    return contentStart >= 0 ? lines.slice(contentStart).join("\n") : raw;
   }
 
   private cronToMs(cron: string): number {

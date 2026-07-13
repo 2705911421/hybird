@@ -15,6 +15,8 @@ import type { InteractionRuntimeTools } from "./runtime.js";
 import { writeExportArtifact } from "./export-artifact.js";
 import { deriveBookIdFromTitle } from "../utils/book-id.js";
 import { normalizePlatformOrOther } from "../models/book.js";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
+import type { StoryRuntimeConfig } from "../story-runtime/schemas.js";
 
 type PipelineLike = Pick<PipelineRunner, "writeNextChapter" | "reviseDraft"> & {
   readonly initBook?: (
@@ -32,6 +34,7 @@ type InstrumentablePipelineLike = PipelineLike & {
     logger?: Logger;
     client?: LLMClient;
     model?: string;
+    storyRuntime?: StoryRuntimeConfig;
   };
 };
 
@@ -104,12 +107,12 @@ export function buildChapterFileLookup(files: ReadonlyArray<string>): ReadonlyMa
   return lookup;
 }
 
-async function exportBookToPath(state: StateLike, bookId: string, options: {
+async function exportBookToPath(state: StateLike, chapterService: ChapterApplicationService, bookId: string, options: {
   readonly format?: "txt" | "md" | "epub";
   readonly approvedOnly?: boolean;
   readonly outputPath?: string;
 }) {
-  return writeExportArtifact(state, bookId, options);
+  return writeExportArtifact(state, bookId, { ...options, chapterService });
 }
 
 function mapStageMessageToStatus(message: string): InteractionEvent["status"] | undefined {
@@ -297,6 +300,11 @@ export function createInteractionToolsFromDeps(
   },
 ): InteractionRuntimeTools {
   const instrumentedPipeline = pipeline as InstrumentablePipelineLike;
+  const storyRuntime = instrumentedPipeline.config?.storyRuntime;
+  const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+    storyRuntime,
+    apiToken: storyRuntime?.apiTokenEnv ? process.env[storyRuntime.apiTokenEnv] : undefined,
+  }));
 
   return {
     listBooks: () => state.listBooks(),
@@ -324,7 +332,7 @@ export function createInteractionToolsFromDeps(
       };
     },
     exportBook: async (bookId, options) => {
-      const result = await exportBookToPath(state, bookId, options);
+      const result = await exportBookToPath(state, chapterService, bookId, options);
       return {
         ...result,
         __interaction: {

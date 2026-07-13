@@ -55,6 +55,7 @@ export interface PlannedEditTransaction {
 
 export interface EditExecutionDeps {
   readonly bookDir: (bookId: string) => string;
+  readonly loadBookConfig?: (bookId: string) => Promise<{ readonly authorityMode?: "legacy" | "runtime" }>;
   readonly loadChapterIndex: (bookId: string) => Promise<ReadonlyArray<ChapterMeta>>;
   readonly saveChapterIndex: (bookId: string, index: ReadonlyArray<ChapterMeta>) => Promise<void>;
 }
@@ -477,6 +478,10 @@ export async function executeEditTransaction(
   deps: EditExecutionDeps,
   request: EditRequest,
 ): Promise<ExecutedEditTransaction> {
+  const book = await deps.loadBookConfig?.(request.bookId);
+  if (book?.authorityMode === "runtime") {
+    throw new Error("RUNTIME_TYPED_COMMAND_REQUIRED: local chapter and truth projection edits are disabled for Runtime-authority projects.");
+  }
   switch (request.kind) {
     case "entity-rename":
       return executeEntityRename(deps, request);

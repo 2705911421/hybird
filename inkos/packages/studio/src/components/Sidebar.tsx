@@ -637,7 +637,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                 label={tr("Runtime 状态", "Runtime status")}
                 icon={<Activity size={16} />}
                 active={activePage === "runtime"}
-                onClick={nav.toRuntime}
+                onClick={() => nav.toRuntime()}
               />
             )}
           </div>

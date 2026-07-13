@@ -1,0 +1,5 @@
+INFO:     Started server process [20820]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:47839 (Press CTRL+C to quit)
+{"timestamp":"2026-07-13T21:45:05+0800","level":"info","message":"runtime request","version":"0.1.0","schema_version":"story-runtime/v1","request_id":"4f6d0d5b-0087-42bd-b3d1-03dda00304a9","operation":"GET /api/story-runtime/v1/health","duration_ms":22.401,"result":200,"retryability":false}

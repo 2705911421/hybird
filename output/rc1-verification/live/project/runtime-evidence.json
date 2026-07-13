@@ -1,0 +1,27 @@
+{
+  "project_id": "rc1-verification",
+  "revision": 7,
+  "latest": 3,
+  "chapter_count": 3,
+  "chapters": [
+    {
+      "number": 1,
+      "title": "第一章：潮声",
+      "body_sha256": "0ffeb968ab921c6612a874ca9632ff298ac93e19b4bddb496e6551c1e44f6cda",
+      "characters": 15
+    },
+    {
+      "number": 2,
+      "title": "第二章：钥匙",
+      "body_sha256": "b8ea99c4533dbe44650dda84f83dbfb76fd5332e6396cf8d7ba5463c8f04c1fa",
+      "characters": 20
+    },
+    {
+      "number": 3,
+      "title": "第三章：灯塔",
+      "body_sha256": "68ce6320d70f6554772915a437b8e2ac33ecbbede0ae233685c05495b41c9ac9",
+      "characters": 15
+    }
+  ],
+  "collection_sha256": "34b88b4013435d7e9d22714e738b13b53ddcb2a2dfe233d9a3ebe568caa67722"
+}

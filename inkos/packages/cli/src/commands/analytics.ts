@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { StateManager, computeAnalytics } from "@actalk/inkos-core";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver, StateManager } from "@actalk/inkos-core";
 import { loadConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 
 export const analyticsCommand = new Command("analytics")
@@ -9,13 +9,15 @@ export const analyticsCommand = new Command("analytics")
   .option("--json", "Output JSON")
   .action(async (bookIdArg: string | undefined, opts) => {
     try {
-      await loadConfig();
       const root = findProjectRoot();
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
       const bookId = await resolveBookId(bookIdArg, root);
       const state = new StateManager(root);
-      const chapters = await state.loadChapterIndex(bookId);
-
-      const analytics = computeAnalytics(bookId, chapters);
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
+      const analytics = await chapterService.analytics(bookId);
 
       if (opts.json) {
         log(JSON.stringify(analytics, null, 2));

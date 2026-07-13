@@ -1,0 +1,78 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  runtime-bundles:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows-x64
+          - os: macos-latest
+            artifact: macos-arm64
+          - os: ubuntu-latest
+            artifact: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: python -m pip install -e "hybrid/story-runtime[package]"
+      - run: pyinstaller --clean --noconfirm story-runtime.spec
+        working-directory: hybrid/story-runtime
+      - if: runner.os != 'Windows'
+        run: ./dist/story-runtime --help
+        working-directory: hybrid/story-runtime
+      - if: runner.os == 'Windows'
+        run: .\dist\story-runtime.exe --help
+        working-directory: hybrid/story-runtime
+      - run: python -c "import hashlib,pathlib; p=next(pathlib.Path('dist').glob('story-runtime*')); pathlib.Path(p.name+'.sha256').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n')"
+        working-directory: hybrid/story-runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: story-runtime-${{ matrix.artifact }}
+          path: |
+            hybrid/story-runtime/dist/story-runtime*
+            hybrid/story-runtime/story-runtime*.sha256
+
+  source-and-legal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: python -m pip install -e "hybrid/story-runtime" cyclonedx-bom
+      - run: cyclonedx-py environment --output-file hybrid/sbom-python.cdx.json
+      - run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file ../hybrid/sbom-node.cdx.json
+        working-directory: inkos
+      - name: Assemble pinned license bundle
+        shell: bash
+        run: |
+          mkdir -p hybrid/licenses
+          cp inkos/LICENSE hybrid/licenses/INKOS-AGPL-3.0.txt
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/lingfengQAQ/webnovel-writer/59654ccaa17f240c5ae41fe51db9443284f8ca1f/LICENSE \
+            --output hybrid/licenses/WEBNOVEL-WRITER-GPL-3.0.txt
+          echo "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  hybrid/licenses/WEBNOVEL-WRITER-GPL-3.0.txt" | sha256sum --check --strict
+      - run: git archive --format=tar.gz --prefix=hybrid-story-system/ -o hybrid-source.tar.gz HEAD
+      - run: sha256sum hybrid-source.tar.gz > hybrid-source.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-sbom-licenses
+          path: |
+            hybrid-source.tar.gz*
+            hybrid/NOTICE
+            hybrid/licenses/
+            hybrid/sbom-*.cdx.json
+            hybrid/story-runtime/UPSTREAM_PROVENANCE.yml

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
-import { ReviewArtifactMapper, RuntimeReviewClient, StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
+import { ChapterApplicationService, ProjectChapterAuthorityResolver, ReviewArtifactMapper, RuntimeReviewClient, StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, resolveBookId, loadConfig, log, logError } from "../utils.js";
 
 async function runtimeReviewClient(root: string): Promise<RuntimeReviewClient> {
@@ -38,6 +38,11 @@ reviewCommand
     try {
       const root = findProjectRoot();
       const state = new StateManager(root);
+      const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
 
       const bookIds = bookId ? [bookId] : await state.listBooks();
       const allPending: Array<{
@@ -52,24 +57,24 @@ reviewCommand
 
       for (const id of bookIds) {
         const book = await state.loadBookConfig(id);
-        const index = await state.loadChapterIndex(id);
+        const chapterPage = await chapterService.list(id, { limit: 100 });
         if (book.authorityMode === "runtime") {
           const client = await runtimeReviewClient(root);
-          for (const ch of index) {
+          for (const ch of chapterPage.items) {
             const [artifacts, status] = await Promise.all([client.chapterReviews(id, ch.number), client.reviewStatus(id, ch.number)]);
             if (status.status === "clear") continue;
             const view = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
             const issues = view.findings.map((finding) => `[${finding.source}/${finding.severity}${finding.blocking ? "/blocking" : ""}] ${finding.message}`);
-            allPending.push({ bookId: id, title: book.title, chapter: ch.number, chapterTitle: ch.title, wordCount: ch.wordCount, status: status.status, issues });
+            allPending.push({ bookId: id, title: book.title, chapter: ch.number, chapterTitle: ch.title, wordCount: ch.characterCount, status: status.status, issues });
             if (!opts.json) {
-              log(`  Ch.${ch.number} "${ch.title}" | ${ch.wordCount} | ${status.status}`);
+              log(`  Ch.${ch.number} "${ch.title}" | ${ch.characterCount} | ${status.status}`);
               for (const issue of issues) log(`    - ${issue}`);
               for (const reason of view.blockingReasons) log(`    blocked: ${reason}`);
             }
           }
           continue;
         }
-        const pending = index.filter(
+        const pending = chapterPage.items.filter(
           (ch) =>
             ch.status === "ready-for-review" || ch.status === "audit-failed",
         );
@@ -88,13 +93,13 @@ reviewCommand
             title: book.title,
             chapter: ch.number,
             chapterTitle: ch.title,
-            wordCount: ch.wordCount,
+            wordCount: ch.characterCount,
             status: ch.status,
             issues: ch.auditIssues,
           });
           if (!opts.json) {
             log(
-              `  Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.wordCount, countingMode)} | ${ch.status}`,
+              `  Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.characterCount, countingMode)} | ${ch.status}`,
             );
             if (ch.auditIssues.length > 0) {
               for (const issue of ch.auditIssues) {

@@ -403,6 +403,62 @@ paths:
           content: { application/json: { schema: { $ref: ./schemas/chapter-artifact-response.json } } }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /projects/{project_id}/chapters:
+    get:
+      tags: [Query]
+      operationId: listFinalizedChapters
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { name: from_chapter, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: to_chapter, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: volume_id, in: query, schema: { type: string } }
+        - { name: finalized_only, in: query, schema: { type: boolean, default: true } }
+      responses:
+        "200": { description: Revision-bound finalized chapter metadata page, content: { application/json: { schema: { $ref: ./schemas/chapter-collection-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/chapter-aggregate:
+    get:
+      tags: [Query]
+      operationId: getChapterAggregate
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      responses:
+        "200": { description: Authoritative chapter aggregate at one project revision, content: { application/json: { schema: { $ref: ./schemas/chapter-aggregate-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/{project_id}/chapter-export:
+    post:
+      tags: [Query]
+      operationId: createChapterExportSnapshot
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: ./schemas/chapter-export-request.json } } }
+      responses:
+        "200": { description: Checksum-verified finalized bodies from one fixed Runtime revision, content: { application/json: { schema: { $ref: ./schemas/chapter-export-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/chapter-search:
+    get:
+      tags: [Query]
+      operationId: searchFinalizedChapters
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 500 } }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageLimit" }
+      responses:
+        "200": { description: Runtime-verified finalized chapter search page, content: { application/json: { schema: { $ref: ./schemas/chapter-search-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /chapters/prepare:
     post:
       tags: [Chapter]

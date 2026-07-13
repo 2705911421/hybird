@@ -170,6 +170,9 @@ writeCommand
 
       const state = new StateManager(root);
       const book = await state.loadBookConfig(bookId);
+      if (book.authorityMode === "runtime") {
+        throw new Error("RUNTIME_REVISION_REQUIRED: rewrite must use Runtime revision validation and commit; local chapter files are never mutated.");
+      }
       notifyLanguage = resolveCliLanguage(book.language);
       notifyBookName = book.title ?? bookId;
       const bookDir = state.bookDir(bookId);

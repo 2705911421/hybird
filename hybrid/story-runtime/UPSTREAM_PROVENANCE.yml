@@ -1,5 +1,5 @@
 format_version: 1
-phase: 7
+phase: 9
 generated_for: hybrid-story-runtime-0.1.0
 distribution_license: AGPL-3.0-only
 legal_status: "Provisional per ADR-008; maintainer/legal confirmation remains required before distribution."
@@ -96,3 +96,20 @@ entries:
     original_commit: none
     original_license: none
     modifications: "Original deterministic Phase 1 fixture, verification, and documentation assets."
+  - target_paths:
+      - src/story_runtime/chapter_reads.py
+      - src/story_runtime/contracts.py
+      - src/story_runtime/api.py
+      - tests/unit/test_chapter_reads.py
+      - ../contracts/story-runtime.openapi.yaml
+      - ../contracts/schemas/chapter-artifact-response.json
+      - ../contracts/schemas/chapter-collection-response.json
+      - ../contracts/schemas/chapter-aggregate-response.json
+      - ../contracts/schemas/chapter-export-request.json
+      - ../contracts/schemas/chapter-export-response.json
+      - ../contracts/schemas/chapter-search-response.json
+    upstream_repository: none
+    original_paths: []
+    original_commit: none
+    original_license: none
+    modifications: "Original RC-1B product-level finalized chapter read model: revision-bound collection cursors, authoritative detail and aggregates, single-transaction export snapshots, Runtime-backed search, checksum validation, typed DTOs, approved OpenAPI/JSON Schemas, and contract tests. No upstream source block copied."
