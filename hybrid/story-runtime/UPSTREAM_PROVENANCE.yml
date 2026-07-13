@@ -1,5 +1,5 @@
 format_version: 1
-phase: 1
+phase: 5
 generated_for: hybrid-story-runtime-0.1.0
 distribution_license: AGPL-3.0-only
 legal_status: "Provisional per ADR-008; maintainer/legal confirmation remains required before distribution."
@@ -15,6 +15,18 @@ upstreams:
     license: AGPL-3.0-only
 
 entries:
+  - target_paths:
+      - src/story_runtime/reviews.py
+      - src/story_runtime/contracts.py
+      - ../contracts/schemas/review-artifacts.json
+    upstream_repository: webnovel_writer
+    original_paths:
+      - webnovel-writer/scripts/data_modules/review_schema.py
+      - webnovel-writer/scripts/data_modules/chapter_commit_schema.py
+      - webnovel-writer/scripts/data_modules/artifact_validator.py
+    original_commit: 59654ccaa17f240c5ae41fe51db9443284f8ca1f
+    original_license: GPL-3.0
+    modifications: "Clean-room typed review/revision redesign with versioning, Unicode evidence hashes, Runtime authority, finding aggregation, revision-bound human decisions and idempotent APIs. No source block copied."
   - target_paths:
       - src/story_runtime/contracts.py
     upstream_repository: webnovel_writer

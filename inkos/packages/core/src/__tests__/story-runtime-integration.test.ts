@@ -83,7 +83,7 @@ describe("Story Runtime Phase 2/3 integration", () => {
         ? { status: "ok", runtime_version: "0.2", schema_versions: ["story-runtime/v1"], database: "ready" }
         : {
             project_id: "runtime-book", revision: 7, phase: "drafting", latest_chapter: 3,
-            projection_health: { status: "ready" }, schema_version: "story-runtime/v1", active_prepare_ids: [],
+            projection_health: { status: "ready" }, schema_version: "story-runtime/v1", active_prepare_ids: [], authority_mode: "runtime",
           }), { status: 200, headers: { "content-type": "application/json" } })),
     });
     await expect(client.health()).resolves.toMatchObject({ status: "ok", database: "ready" });
@@ -154,9 +154,11 @@ describe("Story Runtime Phase 2/3 integration", () => {
     expect(report.onlyStoryRuntime).toContain("story-runtime/hard_constraints/fact-ren");
   });
 
-  it("keeps the client read-only during Phase 2/3", () => {
-    const client = clientFor(runtimePayload()) as StoryRuntimeClient & { commitChapter?: unknown; appendEvents?: unknown };
-    expect(client.commitChapter).toBeUndefined();
+  it("exposes only the governed Phase 4 chapter lifecycle to normal InkOS callers", () => {
+    const client = clientFor(runtimePayload()) as StoryRuntimeClient & { appendEvents?: unknown };
+    expect(client.prepareChapter).toBeTypeOf("function");
+    expect(client.validateChapter).toBeTypeOf("function");
+    expect(client.commitChapter).toBeTypeOf("function");
     expect(client.appendEvents).toBeUndefined();
   });
 });

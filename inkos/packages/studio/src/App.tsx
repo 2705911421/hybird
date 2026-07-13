@@ -21,6 +21,7 @@ import { RadarView } from "./pages/RadarView";
 import { DoctorView } from "./pages/DoctorView";
 import { StoryPlayer } from "./pages/StoryPlayer";
 import { StoryGraphTree } from "./pages/StoryGraphTree";
+import { RuntimePanel, RuntimePanelErrorBoundary, type RuntimeView } from "./pages/RuntimePanel";
 const FlowView = lazy(() => import("./pages/FlowView"));
 const FilmWizard = lazy(() => import("./pages/FilmWizard"));
 import { LanguageSelector } from "./pages/LanguageSelector";
@@ -110,6 +111,7 @@ export function App() {
     toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => setRoute({ page: "import", ...(tab ? { tab } : {}) }),
     toRadar: () => setRoute({ page: "radar" }),
     toDoctor: () => setRoute({ page: "doctor" }),
+    toRuntime: (view: RuntimeView = "overview", bookId?: string, commitId?: string) => setRoute({ page: "runtime", view, ...(bookId ? { bookId } : {}), ...(commitId ? { commitId } : {}) }),
     toPlay: (projectId: string) => setRoute({ page: "play", projectId }),
     toFilm: (projectId: string) => setRoute({ page: "film", projectId }),
     toFlow: (projectId: string) => setRoute({ page: "flow", projectId }),
@@ -341,6 +343,13 @@ export function App() {
           {route.page === "doctor" && (
             <div className="max-w-4xl mx-auto px-6 py-12 md:px-12 lg:py-16 fade-in">
               <DoctorView nav={nav} theme={theme} t={t} />
+            </div>
+          )}
+          {route.page === "runtime" && (
+            <div className="max-w-6xl mx-auto px-4 py-8 md:px-8 fade-in">
+              <RuntimePanelErrorBoundary>
+                <RuntimePanel view={route.view} bookId={route.bookId} commitId={route.commitId} nav={nav} />
+              </RuntimePanelErrorBoundary>
             </div>
           )}
           {route.page === "play" && (

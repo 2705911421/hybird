@@ -33,6 +33,7 @@ configCommand
         "storyRuntime.mode", "storyRuntime.baseUrl", "storyRuntime.apiTokenEnv",
         "storyRuntime.timeoutMs", "storyRuntime.maxContextTokens", "storyRuntime.maxItems",
         "storyRuntime.fallbackOnUnavailable",
+        "unifiedReview.enabled",
         "daemon.schedule.radarCron", "daemon.schedule.writeCron",
         "daemon.maxConcurrentBooks", "daemon.chaptersPerCycle",
         "daemon.retryDelayMs", "daemon.cooldownAfterChapterMs",

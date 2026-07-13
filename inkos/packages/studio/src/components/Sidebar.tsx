@@ -48,6 +48,7 @@ import {
   Rows3,
   Film,
   Languages,
+  Activity,
 } from "lucide-react";
 import { InkosLogo } from "./InkosLogo";
 
@@ -87,6 +88,7 @@ interface Nav {
   toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => void;
   toRadar: () => void;
   toDoctor: () => void;
+  toRuntime: () => void;
   toFilmStudio: (id: string) => void;
 }
 
@@ -99,6 +101,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
   const { data, refetch: refetchBooks, mutate: mutateBooks } = useApi<{ books: ReadonlyArray<BookSummary> }>("/books");
   const { data: filmsData, refetch: refetchFilms } = useApi<{ films: ReadonlyArray<{ projectId: string; title: string }> }>("/interactive-films");
   const { data: daemon, refetch: refetchDaemon } = useApi<{ running: boolean }>("/daemon");
+  const { data: runtimeStatus } = useApi<{ enabled: boolean; featureFlags?: { panel?: boolean } }>("/story-runtime/status");
   const sessions = useChatStore((s) => s.sessions);
   const sessionIdsByBook = useChatStore((s) => s.sessionIdsByBook);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
@@ -629,6 +632,14 @@ export function Sidebar({ nav, activePage, sse, t }: {
               active={activePage === "doctor"}
               onClick={nav.toDoctor}
             />
+            {runtimeStatus?.enabled && runtimeStatus.featureFlags?.panel !== false && (
+              <SidebarItem
+                label={tr("Runtime 状态", "Runtime status")}
+                icon={<Activity size={16} />}
+                active={activePage === "runtime"}
+                onClick={nav.toRuntime}
+              />
+            )}
           </div>
         </div>
       </div>

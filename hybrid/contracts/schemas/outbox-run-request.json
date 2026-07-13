@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "outbox-run-request.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "limit", "retry_failed", "admin_scope"],
+  "properties": {
+    "request_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": ["string", "null"], "maxLength": 128 },
+    "limit": { "type": "integer", "minimum": 1, "maximum": 1000 },
+    "retry_failed": { "type": "boolean" },
+    "admin_scope": { "const": "story-runtime.outbox.run" }
+  }
+}

@@ -16,3 +16,21 @@ def test_cli_initializes_and_reads_fixture(tmp_path, capsys):
     assert main(["--db", str(db), "doctor", "lighthouse-fixture", "--deep"]) == 0
     doctor = json.loads(capsys.readouterr().out)
     assert doctor["status"] == "ok"
+    assert main(["--db", str(db), "overview", "lighthouse-fixture"]) == 0
+    overview = json.loads(capsys.readouterr().out)
+    assert overview["current_revision"] == 7
+    assert main(["--db", str(db), "events", "lighthouse-fixture", "--limit", "2"]) == 0
+    events = json.loads(capsys.readouterr().out)
+    assert len(events["items"]) == 2
+    assert main(["--db", str(db), "projections", "lighthouse-fixture"]) == 0
+    projections = json.loads(capsys.readouterr().out)
+    assert projections["items"]
+    assert main(["--db", str(db), "diagnostics", "lighthouse-fixture"]) == 0
+    diagnostics = json.loads(capsys.readouterr().out)
+    assert diagnostics["project_id"] == "lighthouse-fixture"
+    assert main(["--db", str(db), "run-outbox", "--project-id", "lighthouse-fixture"]) == 0
+    outbox = json.loads(capsys.readouterr().out)
+    assert outbox == {
+        "request_id": outbox["request_id"], "claimed": 0, "completed": 0,
+        "failed": 0, "pending": 0,
+    }

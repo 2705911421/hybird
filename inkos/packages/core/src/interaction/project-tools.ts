@@ -147,6 +147,13 @@ async function withBookMutationLock<T>(
   }
 }
 
+async function assertLegacyAuthority(state: StateLike, bookId: string, operation: string): Promise<void> {
+  const book = await state.loadBookConfig(bookId);
+  if (book.authorityMode === "runtime") {
+    throw new Error(`${operation} cannot write files for Runtime-authority book "${bookId}"; use the Story Runtime commit workflow.`);
+  }
+}
+
 export function buildChapterFileLookup(files: ReadonlyArray<string>): ReadonlyMap<number, string> {
   const lookup = new Map<number, string>();
   for (const file of files) {
@@ -455,6 +462,7 @@ export function createInteractionToolsFromDeps(
       () => pipeline.reviseDraft(bookId, chapterNumber, mode as ReviseMode),
     ),
     patchChapterText: async (bookId, chapterNumber, targetText, replacementText) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "patchChapterText");
       const execution = await executeEditTransaction(
         {
           bookDir: (targetBookId) => state.bookDir(targetBookId),
@@ -478,6 +486,7 @@ export function createInteractionToolsFromDeps(
       };
     }),
     replaceChapterText: async (bookId, chapterNumber, fullText) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "replaceChapterText");
       const execution = await executeEditTransaction(
         {
           bookDir: (targetBookId) => state.bookDir(targetBookId),
@@ -499,6 +508,7 @@ export function createInteractionToolsFromDeps(
       };
     }),
     renameEntity: async (bookId, oldValue, newValue) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "renameEntity");
       const execution = await executeEditTransaction(
         {
           bookDir: (targetBookId) => state.bookDir(targetBookId),
@@ -520,14 +530,17 @@ export function createInteractionToolsFromDeps(
       };
     }),
     updateCurrentFocus: async (bookId, content) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "updateCurrentFocus");
       await state.ensureControlDocuments(bookId);
       await writeFile(join(state.bookDir(bookId), "story", "current_focus.md"), content, "utf-8");
     }),
     updateAuthorIntent: async (bookId, content) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "updateAuthorIntent");
       await state.ensureControlDocuments(bookId);
       await writeFile(join(state.bookDir(bookId), "story", "author_intent.md"), content, "utf-8");
     }),
     writeTruthFile: async (bookId, fileName, content) => withBookMutationLock(state, bookId, async () => {
+      await assertLegacyAuthority(state, bookId, "writeTruthFile");
       await state.ensureControlDocuments(bookId);
       const storyDir = join(state.bookDir(bookId), "story");
       const safeFileName = assertSafeTruthFileName(fileName);

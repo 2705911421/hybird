@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/finalized-commit-response.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["commit_id", "project_id", "chapter_number", "state", "expected_revision", "resulting_revision", "body_sha256", "artifact_sha256", "event_count", "projection_hash", "finalized_at", "replayed"],
+  "properties": {
+    "commit_id": {"type": "string", "format": "uuid"}, "project_id": {"type": "string"}, "chapter_number": {"type": "integer", "minimum": 1},
+    "state": {"type": "string", "const": "FINALIZED"}, "expected_revision": {"type": "integer", "minimum": 0}, "resulting_revision": {"type": "integer", "minimum": 1},
+    "body_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "event_count": {"type": "integer", "minimum": 0}, "projection_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "finalized_at": {"type": "string", "format": "date-time"}, "replayed": {"type": "boolean"}
+  }
+}

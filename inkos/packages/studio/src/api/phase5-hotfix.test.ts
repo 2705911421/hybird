@@ -27,8 +27,8 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     async listBooks(): Promise<string[]> {
       return [];
     }
-    async loadBookConfig(): Promise<never> {
-      throw new Error("not implemented");
+    async loadBookConfig(): Promise<{ authorityMode: "legacy" }> {
+      return { authorityMode: "legacy" };
     }
     async loadChapterIndex(): Promise<[]> {
       return [];

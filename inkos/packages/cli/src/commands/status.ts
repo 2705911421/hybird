@@ -45,6 +45,9 @@ export const statusCommand = new Command("status")
       for (const id of bookIds) {
         const book = await state.loadBookConfig(id);
         const index = await state.loadChapterIndex(id);
+        const runtimeProject = runtimeClient && book.authorityMode === "runtime"
+          ? await runtimeClient.projectStatus(id).catch((error) => ({ unavailable: true as const, error: String(error) }))
+          : undefined;
         const migrationHint = await getLegacyMigrationHint(root, id);
         const persistedChapterCount = await state.getPersistedChapterCount(id);
         const { profile: genreProfile } = await readGenreProfile(root, book.genre);
@@ -69,7 +72,7 @@ export const statusCommand = new Command("status")
           status: book.status,
           genre: book.genre,
           platform: book.platform,
-          chapters: persistedChapterCount,
+          chapters: runtimeProject && "latest_chapter" in runtimeProject ? runtimeProject.latest_chapter : persistedChapterCount,
           targetChapters: book.targetChapters,
           totalWords,
           avgWordsPerChapter: avgWords,
@@ -79,7 +82,7 @@ export const statusCommand = new Command("status")
           degraded,
           ...(migrationHint ? { migrationHint } : {}),
           ...(runtimeClient ? {
-            storyRuntime: await runtimeClient.projectStatus(id).catch((error) => ({ unavailable: true, error: String(error) })),
+            storyRuntime: runtimeProject ?? await runtimeClient.projectStatus(id).catch((error) => ({ unavailable: true, error: String(error) })),
           } : {}),
           ...(opts.chapters ? {
             chapterList: index.map((ch) => ({

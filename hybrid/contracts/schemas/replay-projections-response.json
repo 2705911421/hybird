@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/replay-projections-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["replay_job_id", "project_id", "state", "verify_only", "projection_names", "resulting_hash", "expected_hash", "matched", "event_count"],
+  "properties": {
+    "replay_job_id": {"type": "string", "format": "uuid"}, "project_id": {"type": "string"},
+    "state": {"type": "string", "enum": ["FINALIZED", "MISMATCH"]}, "verify_only": {"type": "boolean"},
+    "projection_names": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "resulting_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "expected_hash": {"type": ["string", "null"]},
+    "matched": {"type": "boolean"}, "event_count": {"type": "integer", "minimum": 0}
+  }
+}

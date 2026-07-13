@@ -108,7 +108,7 @@ describe("interaction tools", () => {
       const state = {
         ensureControlDocuments: vi.fn(async () => {}),
         bookDir: vi.fn((bookId: string) => join(root, "books", bookId)),
-        loadBookConfig: vi.fn(),
+        loadBookConfig: vi.fn(async () => ({ authorityMode: "legacy" as const })),
         loadChapterIndex: vi.fn(async () => JSON.parse(await readFile(join(root, "books", "harbor", "chapters", "index.json"), "utf-8"))),
         saveChapterIndex: vi.fn(async (_bookId: string, index) => {
           await writeFile(join(root, "books", "harbor", "chapters", "index.json"), JSON.stringify(index, null, 2), "utf-8");
@@ -283,6 +283,28 @@ describe("interaction tools", () => {
 
     await expect(tools.writeTruthFile("harbor", "runtime/agent_notes.md", "notes"))
       .rejects.toThrow("Invalid truth file name");
+  });
+
+  it("rejects control-file writes for Runtime-authority books", async () => {
+    const ensureControlDocuments = vi.fn(async () => {});
+    const tools = createInteractionToolsFromDeps(
+      { writeNextChapter: vi.fn(), reviseDraft: vi.fn() },
+      {
+        ensureControlDocuments,
+        bookDir: vi.fn((bookId: string) => join(projectRoot, "books", bookId)),
+        loadBookConfig: vi.fn(async () => ({ authorityMode: "runtime" as const })),
+        loadChapterIndex: vi.fn(async () => []),
+        saveChapterIndex: vi.fn(async () => undefined),
+        listBooks: vi.fn(async () => ["harbor"]),
+        acquireBookLock: noopBookLock(),
+      } as never,
+    );
+
+    await expect(tools.updateCurrentFocus("harbor", "must not be written"))
+      .rejects.toThrow("Runtime-authority");
+    await expect(tools.updateAuthorIntent("harbor", "must not be written"))
+      .rejects.toThrow("Runtime-authority");
+    expect(ensureControlDocuments).not.toHaveBeenCalled();
   });
 
   it("forwards foundation draft fields into shared book creation", async () => {

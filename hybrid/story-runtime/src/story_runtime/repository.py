@@ -43,7 +43,7 @@ class StoryRepository:
                 now = _now()
                 project = fixture["project"]
                 conn.execute(
-                    "INSERT OR IGNORE INTO projects VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT OR IGNORE INTO projects(project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at,authority_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         project_id,
                         int(project.get("revision", 1)),
@@ -52,6 +52,7 @@ class StoryRepository:
                         SCHEMA_VERSION,
                         now,
                         now,
+                        project.get("authority_mode", "legacy"),
                     ),
                 )
                 for row in fixture.get("entities", []):
@@ -96,12 +97,12 @@ class StoryRepository:
                     )
                 for name in ("entities", "relationships", "timeline", "threads", "summaries"):
                     conn.execute(
-                        "INSERT OR IGNORE INTO projection_checkpoints VALUES (?, ?, 'ready', ?, 0, NULL, ?)",
-                        (project_id, name, int(project.get("revision", 1)), now),
+                        "INSERT OR IGNORE INTO projection_checkpoints(project_id,projection_name,status,checkpoint,retry_count,last_error,updated_at,applied_revision,event_offset) VALUES (?, ?, 'ready', ?, 0, NULL, ?, ?, 0)",
+                        (project_id, name, int(project.get("revision", 1)), now, int(project.get("revision", 1))),
                     )
                 result = {"project_id": project_id, "status": "initialized", "replayed": False}
                 conn.execute(
-                    "INSERT INTO idempotency_ledger VALUES (?, ?, 'fixture.initialize', ?, ?)",
+                    "INSERT INTO idempotency_ledger(project_id,idempotency_key,operation,result_json,created_at) VALUES (?, ?, 'fixture.initialize', ?, ?)",
                     (project_id, idempotency_key, _json(result), now),
                 )
                 conn.commit()
@@ -113,7 +114,7 @@ class StoryRepository:
 
     def get_project(self, project_id: str) -> dict[str, Any]:
         with self.database.connect() as conn:
-            row = conn.execute("SELECT project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at FROM projects WHERE project_id=?", (project_id,)).fetchone()
+            row = conn.execute("SELECT project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at,authority_mode,runtime_finalized_at FROM projects WHERE project_id=?", (project_id,)).fetchone()
             if not row:
                 raise NotFoundError("PROJECT_NOT_FOUND", f"project not found: {project_id}")
             return dict(row)

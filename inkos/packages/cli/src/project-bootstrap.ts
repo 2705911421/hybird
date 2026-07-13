@@ -77,12 +77,13 @@ function buildProjectConfig(projectDir: string, language: "zh" | "en") {
     inputGovernanceMode: "v2" as const,
     storyRuntime: {
       mode: "legacy" as const,
-      baseUrl: "http://127.0.0.1:8765",
+      baseUrl: "http://127.0.0.1:47831",
       timeoutMs: 3000,
       maxContextTokens: 16000,
       maxItems: 100,
       fallbackOnUnavailable: true,
     },
+    unifiedReview: { enabled: true },
     daemon: {
       schedule: {
         radarCron: "0 */6 * * *",

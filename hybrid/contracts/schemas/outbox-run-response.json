@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "outbox-run-response.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "claimed", "completed", "failed", "pending"],
+  "properties": {
+    "request_id": { "type": "string", "format": "uuid" },
+    "claimed": { "type": "integer", "minimum": 0 },
+    "completed": { "type": "integer", "minimum": 0 },
+    "failed": { "type": "integer", "minimum": 0 },
+    "pending": { "type": "integer", "minimum": 0 }
+  }
+}

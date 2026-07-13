@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/store-review-decision-request.json",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["decision"],
+      "properties": {"decision": {"$ref": "review-artifacts.json#/$defs/humanReviewDecision"}}
+    }
+  ],
+  "unevaluatedProperties": false
+}

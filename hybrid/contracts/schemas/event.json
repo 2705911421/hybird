@@ -4,11 +4,13 @@
   "title": "StoryEventInput",
   "type": "object",
   "additionalProperties": false,
-  "required": ["event_id", "event_type", "subject", "payload", "evidence"],
+  "required": ["event_type", "subject", "aggregate_type", "aggregate_id", "payload", "evidence"],
   "properties": {
-    "event_id": {"type": "string", "minLength": 8, "maxLength": 160},
+    "event_id": {"type": ["string", "null"], "minLength": 8, "maxLength": 160},
     "event_type": {"type": "string", "minLength": 1, "maxLength": 100},
     "subject": {"type": "string", "minLength": 1, "maxLength": 200},
+    "aggregate_type": {"type": "string", "enum": ["entity", "relationship", "fact", "timeline", "narrative_thread", "project"]},
+    "aggregate_id": {"type": "string", "minLength": 1, "maxLength": 200},
     "payload": {"type": "object"},
     "evidence": {
       "type": "array",

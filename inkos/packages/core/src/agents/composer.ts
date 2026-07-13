@@ -102,7 +102,7 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
 
   const runtimeConfig = input.storyRuntime ?? {
     mode: "legacy" as const,
-    baseUrl: "http://127.0.0.1:8765",
+    baseUrl: "http://127.0.0.1:47831",
     timeoutMs: 3_000,
     maxContextTokens: 16_000,
     maxItems: 100,

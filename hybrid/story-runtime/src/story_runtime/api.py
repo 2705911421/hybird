@@ -8,26 +8,39 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .config import RuntimeConfig
+from .chapter_commits import ChapterCommitService
 from .contracts import (
-    AppendEventsRequest, CommitChapterRequest, ContextQueryResult, DoctorResult,
-    EntityResult, ErrorResponse, ExportSnapshotRequest, HealthResponse,
+    AppendEventsRequest, AppendEventsResult, ChapterArtifactResult, CommitChapterRequest, ContextQueryResult, DoctorResult,
+    CreateProjectRequest, EntityResult, ErrorResponse, ExportSnapshotRequest, FinalizedCommitResult, HealthResponse,
     MigrateProjectRequest, PrepareChapterRequest, ProjectStatusResponse,
-    QueryContextRequest, ReplayProjectionsRequest, ValidateChapterArtifactsRequest,
+    PrepareChapterResult, ProjectCreatedResult, QueryContextRequest, ReplayProjectionsRequest,
+    ReplayProjectionsResult, ValidateChapterArtifactsRequest, ValidateChapterResult,
+    CommitRecoveryRequest, CommitRecoveryResult, OutboxRunRequest, OutboxRunResult,
+    ChapterReviewArtifact, HumanReviewDecision, ReviewStatusResult, ReviewValidationResult,
+    StoreReviewDecisionRequest, ValidateReviewsRequest, ValidateRevisionRequest, RevisionResult, RevisionDiffResult,
+    CommitDetail, CommitListResult, DiagnosticReport, EventTimelineResult, MigrationStatus,
+    ProjectionListResult, RecoveryExecuteRequest, RecoveryJob, RecoveryJobListResult,
+    RecoveryPreviewRequest, ReviewOverview, RuntimeConfigurationStatus, RuntimeOverview,
 )
 from .database import Database
-from .errors import FeatureDisabledError, NotFoundError, RuntimeErrorBase
+from .errors import ConflictError, FeatureDisabledError, NotFoundError, RuntimeErrorBase
 from .repository import StoryRepository
 from .services import RuntimeServices
+from .outbox import OutboxWorker
+from .reviews import ReviewService
+from .observability import ObservabilityService, RecoveryService, redact, redact_text
 
 API_PREFIX = "/api/story-runtime/v1"
 WRITE_RESPONSES = {
-    403: {"model": ErrorResponse, "description": "Phase 1 write feature is disabled"},
+    403: {"model": ErrorResponse, "description": "Runtime write feature is disabled"},
     409: {"model": ErrorResponse, "description": "Revision conflict"},
     422: {"model": ErrorResponse, "description": "Contract or domain validation error"},
 }
 WriteRequest = Union[
     PrepareChapterRequest, ValidateChapterArtifactsRequest, CommitChapterRequest,
     AppendEventsRequest, ReplayProjectionsRequest, MigrateProjectRequest, ExportSnapshotRequest,
+    CommitRecoveryRequest, OutboxRunRequest,
+    ValidateReviewsRequest, StoreReviewDecisionRequest, ValidateRevisionRequest,
 ]
 
 
@@ -37,11 +50,17 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     database.migrations.migrate()
     repository = StoryRepository(database)
     services = RuntimeServices(database, repository)
+    commits = ChapterCommitService(database, unified_review_enabled=config.unified_review_enabled)
     app = FastAPI(title="Hybrid Story Runtime API", version="0.1.0", docs_url="/docs", redoc_url=None)
     app.state.config = config
     app.state.database = database
     app.state.repository = repository
     app.state.services = services
+    app.state.commits = commits
+    app.state.outbox = OutboxWorker(database)
+    app.state.reviews = ReviewService(database)
+    app.state.observability = ObservabilityService(database, repository)
+    app.state.recovery = RecoveryService(database, repository)
 
     def authorize(authorization: Annotated[str | None, Header()] = None) -> None:
         if authorization != f"Bearer {config.local_token}":
@@ -49,8 +68,8 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
 
     @app.exception_handler(RuntimeErrorBase)
     async def runtime_error_handler(_request: Request, exc: RuntimeErrorBase):
-        status = 404 if isinstance(exc, NotFoundError) else 403 if isinstance(exc, FeatureDisabledError) else 503 if exc.retryable else 422
-        body = ErrorResponse(code=exc.code, message=exc.message, retryable=exc.retryable, current_revision=exc.current_revision, details=exc.details)
+        status = 404 if isinstance(exc, NotFoundError) else 409 if isinstance(exc, ConflictError) else 403 if isinstance(exc, FeatureDisabledError) else 503 if exc.retryable else 422
+        body = ErrorResponse(code=exc.code, message=redact_text(exc.message), retryable=exc.retryable, current_revision=exc.current_revision, details=redact(exc.details))
         return JSONResponse(status_code=status, content=body.model_dump(mode="json"))
 
     @app.exception_handler(RequestValidationError)
@@ -71,6 +90,48 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     def project_status(project_id: str) -> ProjectStatusResponse:
         return services.project_status(project_id)
 
+    def observability_enabled() -> None:
+        if not config.observability_enabled:
+            raise FeatureDisabledError("OBSERVABILITY_DISABLED", "Runtime observability is disabled by feature flag.")
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/overview", response_model=RuntimeOverview, operation_id="getRuntimeOverview", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def runtime_overview(project_id: str):
+        return app.state.observability.overview(project_id)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/commits", response_model=CommitListResult, operation_id="listCommits", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def list_commits(project_id: str, cursor: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 25,
+                     chapter: Annotated[int | None, Query(ge=1)] = None, state: str | None = None,
+                     from_date: str | None = None, to_date: str | None = None):
+        return app.state.observability.commits(project_id, cursor=cursor, limit=limit, chapter=chapter, state=state, date_from=from_date, date_to=to_date)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/commits/{{commit_id}}", response_model=CommitDetail, operation_id="getCommitDetail", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def get_commit(project_id: str, commit_id: str):
+        return app.state.observability.commit(project_id, commit_id)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/events", response_model=EventTimelineResult, operation_id="listEvents", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def list_events(project_id: str, cursor: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 25,
+                    event_type: str | None = None, aggregate: str | None = None,
+                    chapter: Annotated[int | None, Query(ge=1)] = None,
+                    revision: Annotated[int | None, Query(ge=0)] = None, view: str = "summary"):
+        return app.state.observability.events(project_id, cursor=cursor, limit=limit, event_type=event_type,
+                                              aggregate=aggregate, chapter=chapter, revision=revision, view=view)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/projections", response_model=ProjectionListResult, operation_id="listProjections", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def list_projections(project_id: str):
+        return app.state.observability.projections(project_id)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/reviews/status", response_model=ReviewOverview, operation_id="getReviewOverview", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def review_overview(project_id: str):
+        return app.state.observability.reviews(project_id)
+
+    @app.get(f"{API_PREFIX}/migration/status", response_model=MigrationStatus, operation_id="getMigrationStatus", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def migration_status():
+        return app.state.observability.migration()
+
+    @app.get(f"{API_PREFIX}/configuration/status", response_model=RuntimeConfigurationStatus, operation_id="getRuntimeConfigurationStatus", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def configuration_status():
+        return app.state.observability.configuration()
+
     @app.post(f"{API_PREFIX}/queries/context", response_model=ContextQueryResult, operation_id="queryContext", dependencies=[Depends(authorize)])
     def query_context(body: QueryContextRequest) -> ContextQueryResult:
         return services.query_context(body)
@@ -82,31 +143,118 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
             raise NotFoundError("REVISION_NOT_FOUND", f"revision {at_revision} does not exist")
         return result
 
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters/{{chapter_number}}", response_model=ChapterArtifactResult, operation_id="getFinalizedChapter", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})
+    def finalized_chapter(project_id: str, chapter_number: int) -> ChapterArtifactResult:
+        if chapter_number < 1:
+            raise NotFoundError("CHAPTER_NOT_FOUND", f"finalized chapter not found: {chapter_number}")
+        return commits.chapter(project_id, chapter_number)
+
     def disabled(_body: WriteRequest) -> None:
         raise FeatureDisabledError(
             "WRITE_FEATURE_DISABLED",
-            "Phase 1 write endpoints are disabled",
+            "Runtime write endpoints require STORY_RUNTIME_ENABLE_WRITES=1",
             details={"feature_flag": "STORY_RUNTIME_ENABLE_WRITES", "enabled": False},
         )
 
-    @app.post(f"{API_PREFIX}/chapters/prepare", operation_id="prepareChapter", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
-    def prepare_disabled(body: PrepareChapterRequest): disabled(body)
+    @app.post(f"{API_PREFIX}/projects", response_model=ProjectCreatedResult, operation_id="createRuntimeProject", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def create_runtime_project(body: CreateProjectRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.create_project(body)
 
-    @app.post(f"{API_PREFIX}/chapters/validate", operation_id="validateChapterArtifacts", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
-    def validate_disabled(body: ValidateChapterArtifactsRequest): disabled(body)
+    @app.post(f"{API_PREFIX}/chapters/prepare", response_model=PrepareChapterResult, operation_id="prepareChapter", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def prepare_chapter(body: PrepareChapterRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.prepare(body)
 
-    @app.post(f"{API_PREFIX}/chapters/commit", operation_id="commitChapter", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
-    def commit_disabled(body: CommitChapterRequest): disabled(body)
+    @app.post(f"{API_PREFIX}/chapters/validate", response_model=ValidateChapterResult, operation_id="validateChapterArtifacts", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def validate_chapter(body: ValidateChapterArtifactsRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.validate(body)
 
-    @app.post(f"{API_PREFIX}/events/append", operation_id="appendEvents", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
-    def events_disabled(body: AppendEventsRequest): disabled(body)
+    @app.post(f"{API_PREFIX}/chapters/commit", response_model=FinalizedCommitResult, operation_id="commitChapter", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def commit_chapter(body: CommitChapterRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.commit(body)
 
-    @app.post(f"{API_PREFIX}/projections/replay", operation_id="replayProjections", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
-    def replay_disabled(body: ReplayProjectionsRequest): disabled(body)
+    @app.post(f"{API_PREFIX}/events/append", response_model=AppendEventsResult, operation_id="appendEvents", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def append_events(body: AppendEventsRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.append_operator_events(body)
+
+    @app.post(f"{API_PREFIX}/projections/replay", response_model=ReplayProjectionsResult, operation_id="replayProjections", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def replay_projections(body: ReplayProjectionsRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.replay(body)
+
+    @app.post(f"{API_PREFIX}/commits/recover", response_model=CommitRecoveryResult, operation_id="recoverCommit", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def recover_commit(body: CommitRecoveryRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.recover(body)
+
+    @app.post(f"{API_PREFIX}/outbox/run", response_model=OutboxRunResult, operation_id="runOutbox", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def run_outbox(body: OutboxRunRequest):
+        if not config.writes_enabled: disabled(body)
+        return app.state.outbox.run(body)
+
+    @app.post(f"{API_PREFIX}/reviews/validate", response_model=ReviewValidationResult, operation_id="validateReviews", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def validate_reviews(body: ValidateReviewsRequest):
+        if not config.writes_enabled: disabled(body)
+        return app.state.reviews.validate(body)
+
+    @app.post(f"{API_PREFIX}/reviews/decisions", response_model=HumanReviewDecision, operation_id="storeReviewDecision", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def store_review_decision(body: StoreReviewDecisionRequest):
+        if not config.writes_enabled: disabled(body)
+        return app.state.reviews.decision(body)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters/{{chapter_number}}/reviews", response_model=list[ChapterReviewArtifact], operation_id="getChapterReviews", dependencies=[Depends(authorize)])
+    def chapter_reviews(project_id: str, chapter_number: int):
+        return app.state.reviews.artifacts(project_id, chapter_number)
+
+    @app.post(f"{API_PREFIX}/revisions/validate", response_model=RevisionResult, operation_id="validateRevision", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def validate_revision(body: ValidateRevisionRequest):
+        if not config.writes_enabled: disabled(body)
+        return app.state.reviews.validate_revision(body)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters/{{chapter_number}}/review-status", response_model=ReviewStatusResult, operation_id="getChapterReviewStatus", dependencies=[Depends(authorize)])
+    def chapter_review_status(project_id: str, chapter_number: int):
+        return app.state.reviews.status(project_id, chapter_number)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters/{{chapter_number}}/revision-diff", response_model=RevisionDiffResult, operation_id="getChapterRevisionDiff", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})
+    def chapter_revision_diff(project_id: str, chapter_number: int):
+        return app.state.reviews.revision_diff(project_id, chapter_number)
 
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/doctor", response_model=DoctorResult, operation_id="doctorProject", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})
     def doctor(project_id: str, deep: bool = False) -> DoctorResult:
         return services.doctor(project_id, deep)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/diagnostics", response_model=DiagnosticReport, operation_id="downloadDiagnosticReport", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def diagnostics(project_id: str):
+        return app.state.observability.diagnostics(project_id, services.doctor(project_id, False))
+
+    def recovery_enabled() -> None:
+        observability_enabled()
+        if not config.recovery_enabled:
+            raise FeatureDisabledError("RECOVERY_DISABLED", "Runtime recovery operations are disabled by feature flag.")
+
+    @app.post(f"{API_PREFIX}/projects/{{project_id}}/recovery-jobs/preview", response_model=RecoveryJob, operation_id="previewRecovery", dependencies=[Depends(authorize), Depends(recovery_enabled)], responses=WRITE_RESPONSES)
+    def preview_recovery(project_id: str, body: RecoveryPreviewRequest):
+        return app.state.recovery.preview(project_id, body)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/recovery-jobs", response_model=RecoveryJobListResult, operation_id="listRecoveryJobs", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def list_recovery_jobs(project_id: str, cursor: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 25):
+        return app.state.recovery.list(project_id, cursor=cursor, limit=limit)
+
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/recovery-jobs/{{job_id}}", response_model=RecoveryJob, operation_id="getRecoveryJob", dependencies=[Depends(authorize), Depends(observability_enabled)])
+    def get_recovery_job(project_id: str, job_id: str):
+        return app.state.recovery.get(project_id, job_id)
+
+    @app.post(f"{API_PREFIX}/projects/{{project_id}}/recovery-jobs/{{job_id}}/execute", response_model=RecoveryJob, operation_id="executeRecovery", dependencies=[Depends(authorize), Depends(recovery_enabled)], responses=WRITE_RESPONSES)
+    def execute_recovery(project_id: str, job_id: str, body: RecoveryExecuteRequest):
+        return app.state.recovery.execute(project_id, job_id, body)
+
+    @app.post(f"{API_PREFIX}/projects/{{project_id}}/recovery-jobs/{{job_id}}/cancel", response_model=RecoveryJob, operation_id="cancelRecovery", dependencies=[Depends(authorize), Depends(recovery_enabled)], responses=WRITE_RESPONSES)
+    def cancel_recovery(project_id: str, job_id: str, body: RecoveryExecuteRequest):
+        return app.state.recovery.cancel(project_id, job_id, body.actor)
 
     @app.post(f"{API_PREFIX}/projects/migrate", operation_id="migrateProject", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
     def migrate_disabled(body: MigrateProjectRequest): disabled(body)

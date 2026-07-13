@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/create-project-request.json",
+  "title": "CreateProjectRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "idempotency_key", "project_id", "schema_version", "authority_mode"],
+  "properties": {
+    "request_id": {"type": "string", "format": "uuid"},
+    "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 200},
+    "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "schema_version": {"type": "string", "const": "story-runtime/v1"},
+    "authority_mode": {"type": "string", "const": "runtime"}
+  }
+}

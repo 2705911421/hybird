@@ -7,6 +7,9 @@ import {
   StateManager,
   PipelineRunner,
   StoryRuntimeClient,
+  StoryRuntimeClientError,
+  RuntimeReviewClient,
+  ReviewArtifactMapper,
   createLLMClient,
   createLogger,
   createInteractionToolsFromDeps,
@@ -2460,7 +2463,11 @@ async function probeServiceCapabilities(args: {
 export function createStudioServer(initialConfig: ProjectConfig, root: string, overrides: { readonly nodeImageGenerator?: NodeImageDeps } = {}) {
   const app = new Hono();
   const state = new StateManager(root);
+  const isRuntimeAuthority = async (bookId: string): Promise<boolean> =>
+    (await state.loadBookConfig(bookId)).authorityMode === "runtime";
   let cachedConfig = initialConfig;
+  const runtimePanelEnabled = process.env.INKOS_STUDIO_RUNTIME_PANEL !== "0";
+  const runtimeRecoveryEnabled = process.env.INKOS_STUDIO_RUNTIME_RECOVERY !== "0";
 
   app.use("/*", cors());
 
@@ -2521,6 +2528,47 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return freshConfig;
   }
 
+  async function createRuntimeClient(): Promise<StoryRuntimeClient> {
+    const currentConfig = await loadCurrentProjectConfig();
+    if (currentConfig.storyRuntime.mode === "legacy") {
+      throw new ApiError(404, "STORY_RUNTIME_DISABLED", "Story Runtime is disabled for this project.");
+    }
+    return new StoryRuntimeClient({
+      baseUrl: currentConfig.storyRuntime.baseUrl,
+      timeoutMs: currentConfig.storyRuntime.timeoutMs,
+      apiToken: currentConfig.storyRuntime.apiTokenEnv
+        ? process.env[currentConfig.storyRuntime.apiTokenEnv]
+        : undefined,
+    });
+  }
+
+  function runtimeProxyError(error: unknown): {
+    readonly status: 423 | 502 | 503;
+    readonly body: {
+      readonly runtimeState: "degraded" | "unavailable" | "version_mismatch" | "migration_required" | "database_locked" | "recovery_required";
+      readonly error: { readonly code: string; readonly message: string; readonly retryable: boolean };
+    };
+  } {
+    if (error instanceof StoryRuntimeClientError) {
+      if (error.code === "malformed_response") {
+        return { status: 502, body: { runtimeState: "version_mismatch", error: { code: "RUNTIME_DTO_MISMATCH", message: "Studio cannot read this Runtime version.", retryable: false } } };
+      }
+      if (error.code === "unavailable") {
+        return { status: 503, body: { runtimeState: "unavailable", error: { code: "RUNTIME_UNAVAILABLE", message: "Story Runtime is unavailable.", retryable: true } } };
+      }
+      if (error.runtimeCode === "DATABASE_LOCKED") {
+        return { status: 423, body: { runtimeState: "database_locked", error: { code: "DATABASE_LOCKED", message: "Runtime storage is temporarily locked.", retryable: true } } };
+      }
+      if (error.runtimeCode?.includes("MIGRATION")) {
+        return { status: 503, body: { runtimeState: "migration_required", error: { code: "MIGRATION_REQUIRED", message: "Runtime schema migration is required.", retryable: false } } };
+      }
+      if (error.runtimeCode?.includes("RECOVERY") || error.runtimeCode?.includes("COMMIT")) {
+        return { status: 503, body: { runtimeState: "recovery_required", error: { code: error.runtimeCode, message: "Runtime recovery requires attention.", retryable: false } } };
+      }
+    }
+    return { status: 503, body: { runtimeState: "degraded", error: { code: "RUNTIME_REQUEST_FAILED", message: "Runtime could not complete the request.", retryable: true } } };
+  }
+
   // Read the project language fresh from inkos.json on every call, so a language
   // switch takes effect on the next request instead of being frozen at startup.
   // A missing/corrupt inkos.json means "no project language configured" -> zh.
@@ -2566,6 +2614,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       modelOverrides: currentConfig.modelOverrides,
       notifyChannels: currentConfig.notify,
       storyRuntime: currentConfig.storyRuntime,
+      unifiedReviewEnabled: currentConfig.unifiedReview?.enabled ?? true,
       logger,
       onContextCompression: (event) => {
         broadcast("context:compression", {
@@ -2591,36 +2640,194 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.get("/api/v1/story-runtime/status", async (c) => {
     const currentConfig = await loadCurrentProjectConfig();
     if (currentConfig.storyRuntime.mode === "legacy") {
-      return c.json({ mode: "legacy", enabled: false, health: null });
+      return c.json({ mode: "legacy", enabled: false, health: null, featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
     }
-    const client = new StoryRuntimeClient({
-      baseUrl: currentConfig.storyRuntime.baseUrl,
-      timeoutMs: currentConfig.storyRuntime.timeoutMs,
-      apiToken: currentConfig.storyRuntime.apiTokenEnv
-        ? process.env[currentConfig.storyRuntime.apiTokenEnv]
-        : undefined,
-    });
     try {
-      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: true, health: await client.health() });
+      const client = await createRuntimeClient();
+      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: true, health: await client.health(), featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
     } catch (error) {
-      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: true, health: null, error: String(error) }, 503);
+      const mapped = runtimeProxyError(error);
+      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: true, health: null, featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled }, ...mapped.body }, mapped.status);
     }
   });
 
   app.get("/api/v1/story-runtime/projects/:id/status", async (c) => {
     const currentConfig = await loadCurrentProjectConfig();
     if (currentConfig.storyRuntime.mode === "legacy") return c.json({ error: "Story Runtime is disabled" }, 404);
-    const client = new StoryRuntimeClient({
-      baseUrl: currentConfig.storyRuntime.baseUrl,
-      timeoutMs: currentConfig.storyRuntime.timeoutMs,
-      apiToken: currentConfig.storyRuntime.apiTokenEnv
-        ? process.env[currentConfig.storyRuntime.apiTokenEnv]
-        : undefined,
-    });
     try {
+      const client = await createRuntimeClient();
       return c.json(await client.projectStatus(c.req.param("id")));
     } catch (error) {
-      return c.json({ error: String(error) }, 503);
+      const mapped = runtimeProxyError(error);
+      return c.json(mapped.body, mapped.status);
+    }
+  });
+
+  function runtimeProjectId(c: { req: { param(name: string): string } }): string {
+    const id = c.req.param("id");
+    if (!isSafeBookId(id)) throw new ApiError(400, "INVALID_PROJECT_ID", "Invalid Runtime project ID.");
+    return id;
+  }
+
+  function positiveInt(value: string | undefined): number | undefined {
+    if (value === undefined || value === "") return undefined;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  }
+
+  app.get("/api/v1/story-runtime/projects/:id/overview", async (c) => {
+    if (!runtimePanelEnabled) return c.json({ error: { code: "RUNTIME_PANEL_DISABLED", message: "Runtime panel is disabled." } }, 404);
+    try { return c.json(await (await createRuntimeClient()).overview(runtimeProjectId(c))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/commits", async (c) => {
+    try {
+      return c.json(await (await createRuntimeClient()).commits(runtimeProjectId(c), {
+        cursor: c.req.query("cursor"), limit: positiveInt(c.req.query("limit")), chapter: positiveInt(c.req.query("chapter")),
+        state: c.req.query("state"), fromDate: c.req.query("fromDate"), toDate: c.req.query("toDate"),
+      }));
+    } catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/commits/:commitId", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).commitDetail(runtimeProjectId(c), c.req.param("commitId"))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/events", async (c) => {
+    const view = c.req.query("view") === "evidence" ? "evidence" : "summary";
+    try {
+      return c.json(await (await createRuntimeClient()).events(runtimeProjectId(c), {
+        cursor: c.req.query("cursor"), limit: positiveInt(c.req.query("limit")), eventType: c.req.query("eventType"),
+        aggregate: c.req.query("aggregate"), chapter: positiveInt(c.req.query("chapter")),
+        revision: positiveInt(c.req.query("revision")), view,
+      }));
+    } catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/projections", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).projections(runtimeProjectId(c))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/doctor", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).doctor(runtimeProjectId(c), c.req.query("deep") === "true")); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/reviews/status", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).reviewOverview(runtimeProjectId(c))); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/migration/status", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).migrationStatus()); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/configuration/status", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).configurationStatus()); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/diagnostics", async (c) => {
+    try {
+      const report = await (await createRuntimeClient()).diagnostics(runtimeProjectId(c));
+      c.header("Content-Disposition", `attachment; filename="runtime-diagnostics-${encodeURIComponent(runtimeProjectId(c))}.json"`);
+      return c.json(report);
+    } catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/story-runtime/projects/:id/recovery-jobs", async (c) => {
+    try { return c.json(await (await createRuntimeClient()).recoveryJobs(runtimeProjectId(c), c.req.query("cursor"), positiveInt(c.req.query("limit")) ?? 25)); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/projects/:id/recovery-jobs/preview", async (c) => {
+    if (!runtimeRecoveryEnabled) return c.json({ error: { code: "RUNTIME_RECOVERY_DISABLED", message: "Runtime recovery is disabled." } }, 403);
+    const body: { operation?: string; parameters?: Record<string, unknown> } = await c.req.json<{ operation?: string; parameters?: Record<string, unknown> }>().catch(() => ({}));
+    const operations = new Set(["retry_outbox_item", "rebuild_lexical_index", "rebuild_vector_index", "replay_core_projection", "abort_prepared_commit", "restore_snapshot", "clear_retry_queue", "resume_interrupted_migration"]);
+    if (!body.operation || !operations.has(body.operation)) return c.json({ error: { code: "INVALID_RECOVERY_OPERATION", message: "Unsupported recovery operation." } }, 400);
+    try { return c.json(await (await createRuntimeClient()).previewRecovery(runtimeProjectId(c), body.operation as Parameters<StoryRuntimeClient["previewRecovery"]>[1], body.parameters ?? {}, "studio-user")); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/projects/:id/recovery-jobs/:jobId/execute", async (c) => {
+    if (!runtimeRecoveryEnabled) return c.json({ error: { code: "RUNTIME_RECOVERY_DISABLED", message: "Runtime recovery is disabled." } }, 403);
+    const body: { confirmationToken?: string } = await c.req.json<{ confirmationToken?: string }>().catch(() => ({}));
+    try { return c.json(await (await createRuntimeClient()).executeRecovery(runtimeProjectId(c), c.req.param("jobId"), "studio-user", body.confirmationToken)); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.post("/api/v1/story-runtime/projects/:id/recovery-jobs/:jobId/cancel", async (c) => {
+    if (!runtimeRecoveryEnabled) return c.json({ error: { code: "RUNTIME_RECOVERY_DISABLED", message: "Runtime recovery is disabled." } }, 403);
+    try { return c.json(await (await createRuntimeClient()).cancelRecovery(runtimeProjectId(c), c.req.param("jobId"), "studio-user")); }
+    catch (error) { const mapped = runtimeProxyError(error); return c.json(mapped.body, mapped.status); }
+  });
+
+  app.get("/api/v1/books/:id/chapters/:chapter/reviews", async (c) => {
+    const id = c.req.param("id");
+    const chapter = Number.parseInt(c.req.param("chapter"), 10);
+    if (!Number.isInteger(chapter) || chapter < 1) return c.json({ error: "invalid chapter number" }, 400);
+    if (!await isRuntimeAuthority(id)) return c.json({ error: "Legacy projects use the legacy review flow" }, 409);
+    const currentConfig = await loadCurrentProjectConfig();
+    const client = new RuntimeReviewClient({
+      baseUrl: currentConfig.storyRuntime.baseUrl, timeoutMs: currentConfig.storyRuntime.timeoutMs,
+      apiToken: currentConfig.storyRuntime.apiTokenEnv ? process.env[currentConfig.storyRuntime.apiTokenEnv] : undefined,
+    });
+    try {
+      const [artifacts, status, revisionDiff] = await Promise.all([client.chapterReviews(id, chapter), client.reviewStatus(id, chapter), client.revisionDiff(id, chapter).catch(() => undefined)]);
+      const view = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
+      const severity = c.req.query("severity");
+      const source = c.req.query("source");
+      const findingStatus = c.req.query("status");
+      const findings = view.findings.filter((finding) =>
+        (!severity || finding.severity === severity) && (!source || finding.source === source) && (!findingStatus || finding.status === findingStatus));
+      return c.json({ artifacts, status, revisionDiff, view: { ...view, findings } });
+    } catch (error) {
+      const mapped = runtimeProxyError(error);
+      return c.json(mapped.body, mapped.status);
+    }
+  });
+
+  app.post("/api/v1/books/:id/chapters/:chapter/review-decisions", async (c) => {
+    const id = c.req.param("id");
+    const chapter = Number.parseInt(c.req.param("chapter"), 10);
+    if (!Number.isInteger(chapter) || chapter < 1) return c.json({ error: "invalid chapter number" }, 400);
+    if (!await isRuntimeAuthority(id)) return c.json({ error: "Legacy projects use the legacy review flow" }, 409);
+    const body: {
+      decisionId?: string; idempotencyKey?: string; reviewer?: string; decision?: "approve" | "reject" | "request_changes";
+      findingDecisions?: Record<string, "accept" | "reject" | "request_changes">; comment?: string;
+    } = await c.req.json().catch(() => ({}));
+    if (!body.decisionId || !body.idempotencyKey || !body.reviewer || !body.decision) {
+      return c.json({ error: "decisionId, idempotencyKey, reviewer and decision are required" }, 400);
+    }
+    const currentConfig = await loadCurrentProjectConfig();
+    const client = new RuntimeReviewClient({
+      baseUrl: currentConfig.storyRuntime.baseUrl, timeoutMs: currentConfig.storyRuntime.timeoutMs,
+      apiToken: currentConfig.storyRuntime.apiTokenEnv ? process.env[currentConfig.storyRuntime.apiTokenEnv] : undefined,
+    });
+    try {
+      const [status, artifacts] = await Promise.all([client.reviewStatus(id, chapter), client.chapterReviews(id, chapter)]);
+      const selected = new Set(Object.keys(body.findingDecisions ?? {}));
+      if (selected.size > 1) {
+        const blockingSelected = artifacts.flatMap((artifact) => artifact.findings).some((finding) => selected.has(finding.finding_id) && finding.blocking);
+        if (blockingSelected) return c.json({ error: "Bulk decisions are limited to non-blocking findings" }, 409);
+      }
+      const decision = await client.storeReviewDecision({
+        projectId: id, idempotencyKey: body.idempotencyKey, expectedRevision: status.revision,
+        decision: {
+          decision_id: body.decisionId, schema_version: "review-artifacts/v1", project_id: id,
+          chapter_number: chapter, reviewer: body.reviewer, decision: body.decision,
+          finding_decisions: body.findingDecisions ?? {}, comment: body.comment ?? "",
+          timestamp: new Date().toISOString(), source_revision: status.revision,
+        },
+      });
+      return c.json({ decision, status: await client.reviewStatus(id, chapter) });
+    } catch (error) {
+      const mapped = runtimeProxyError(error);
+      return c.json(mapped.body, mapped.status);
     }
   });
 
@@ -2761,6 +2968,16 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const chaptersDir = join(bookDir, "chapters");
 
     try {
+      if (await isRuntimeAuthority(id)) {
+        const currentConfig = await loadCurrentProjectConfig();
+        if (currentConfig.storyRuntime.mode === "legacy") return c.json({ error: "Story Runtime is disabled" }, 503);
+        const client = new StoryRuntimeClient({
+          baseUrl: currentConfig.storyRuntime.baseUrl, timeoutMs: currentConfig.storyRuntime.timeoutMs,
+          apiToken: currentConfig.storyRuntime.apiTokenEnv ? process.env[currentConfig.storyRuntime.apiTokenEnv] : undefined,
+        });
+        const chapter = await client.finalizedChapter(id, num);
+        return c.json({ chapterNumber: num, filename: null, content: chapter.body, runtime: chapter });
+      }
       const files = await readdir(chaptersDir);
       const paddedNum = String(num).padStart(4, "0");
       const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
@@ -2780,6 +2997,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     const bookDir = state.bookDir(id);
     const chaptersDir = join(bookDir, "chapters");
     const { content } = await c.req.json<{ content: string }>();
+    if (await isRuntimeAuthority(id)) {
+      return c.json({ error: "Runtime-authority chapters cannot be overwritten through the file API" }, 409);
+    }
 
     try {
       const files = await readdir(chaptersDir);
@@ -3060,6 +3280,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/books/:id/chapters/:num/approve", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
+    if (await isRuntimeAuthority(id)) return c.json({ error: "Runtime-authority review state is owned by Story Runtime" }, 409);
 
     try {
       const index = await state.loadChapterIndex(id);
@@ -3076,6 +3297,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/books/:id/chapters/:num/reject", async (c) => {
     const id = c.req.param("id");
     const num = parseInt(c.req.param("num"), 10);
+    if (await isRuntimeAuthority(id)) return c.json({ error: "Runtime-authority review state is owned by Story Runtime" }, 409);
 
     try {
       const index = await state.loadChapterIndex(id);
@@ -5328,6 +5550,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.put("/api/v1/books/:id/truth/:file{.+}", async (c) => {
     const id = c.req.param("id");
     const file = c.req.param("file");
+    if (await isRuntimeAuthority(id)) {
+      return c.json({ error: "Runtime-authority Truth is read-only; submit a typed Runtime commit" }, 409);
+    }
     const bookDir = state.bookDir(id);
     const resolved = resolveTruthFilePath(bookDir, file);
     if (!resolved) {

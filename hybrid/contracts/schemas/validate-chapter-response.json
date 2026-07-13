@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/validate-chapter-response.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["commit_id", "project_id", "chapter_number", "state", "artifact_sha256", "validation_token", "issues", "replayed"],
+  "properties": {
+    "commit_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": "string"},
+    "chapter_number": {"type": "integer", "minimum": 1},
+    "state": {"type": "string", "enum": ["PREPARED", "VALIDATED", "PERSISTING", "COMMITTED", "PROJECTING", "FINALIZED", "REJECTED", "ABORTED", "RECOVERY_REQUIRED"]},
+    "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "validation_token": {"type": ["string", "null"]},
+    "issues": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["severity", "code", "message", "event_ordinal"], "properties": {"severity": {"type": "string", "enum": ["blocking", "warning", "informational"]}, "code": {"type": "string"}, "message": {"type": "string"}, "event_ordinal": {"type": ["integer", "null"], "minimum": 0}}}},
+    "replayed": {"type": "boolean"}
+  }
+}

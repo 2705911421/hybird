@@ -190,10 +190,33 @@ export {
 } from "./agents/composer.js";
 export {
   StoryRuntimeClient,
+  RuntimeReviewClient,
   StoryRuntimeClientError,
   type StoryRuntimeClientOptions,
   type QueryContextInput,
+  type RuntimeChapterArtifactsInput,
+  type RuntimeStoryEventInput,
 } from "./story-runtime/client.js";
+export {
+  REVIEW_ARTIFACT_SCHEMA_VERSION, EvidenceSpanSchema, ReviewFindingSchema,
+  ChapterReviewArtifactSchema, StateMutationProposalSchema, RevisionPlanSchema,
+  RevisionResultSchema, HumanReviewDecisionSchema, validateEvidenceSpan,
+  ReviewStatusResultSchema, ReviewValidationResultSchema, RevisionDiffResultSchema,
+  type ChapterReviewArtifact, type ReviewFinding, type RevisionPlan,
+  type RevisionResult, type HumanReviewDecision, type StateMutationProposal,
+  type ReviewStatusResult, type ReviewValidationResult, type RevisionDiffResult,
+} from "./review-artifacts/schemas.js";
+export { InkOSReviewAdapter, InkOSRevisionAdapter, ReviewArtifactMapper, reviewFindingFingerprint, type UnifiedReviewViewModel, type UnifiedReviewFinding } from "./review-artifacts/adapters.js";
+export { parseUntrustedArtifact, UntrustedArtifactError, MAX_REVIEW_ARTIFACT_BYTES } from "./review-artifacts/untrusted-parser.js";
+export {
+  LegacyChapterPersistence,
+  StoryRuntimeChapterPersistence,
+  RuntimeValidationBlockedError,
+  buildRuntimeArtifacts,
+  type ChapterPersistenceInput,
+  type ChapterPersistencePort,
+  type ChapterPersistenceResult,
+} from "./pipeline/chapter-persistence-port.js";
 export {
   LegacyTruthContextProvider,
   StoryRuntimeContextProvider,

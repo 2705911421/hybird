@@ -12,6 +12,7 @@ from .contracts import (
     QueryContextRequest, QueryTrace,
 )
 from .database import Database
+from .chapter_commits import ChapterCommitService
 from .repository import StoryRepository
 
 
@@ -45,8 +46,17 @@ class RuntimeServices:
                 "recoverable": "true" if projection["recoverable"] else "false",
                 "repair": "replay:" + ",".join(degraded_names) if degraded_names else "none",
             },
-            schema_version=project["schema_version"], active_prepare_ids=[],
+            schema_version=project["schema_version"],
+            active_prepare_ids=self._active_prepare_ids(project_id),
+            authority_mode=project.get("authority_mode", "legacy"),
         )
+
+    def _active_prepare_ids(self, project_id: str) -> list[str]:
+        with self.database.connect() as conn:
+            return [row[0] for row in conn.execute(
+                "SELECT commit_id FROM chapter_commits WHERE project_id=? AND state IN ('PREPARED','VALIDATED') ORDER BY created_at",
+                (project_id,),
+            )]
 
     def entity(self, project_id: str, entity_id: str, include_history: bool = False) -> EntityResult:
         project = self.repository.get_project(project_id)
@@ -154,7 +164,7 @@ class RuntimeServices:
         checks = [
             DoctorCheck(code="schema.current", status="pass", message=f"schema migration {self.database.migrations.current_version()} is current", repair=None),
             DoctorCheck(code="authority.integrity", status="pass", message="SQLite integrity check passed", repair=None),
-            DoctorCheck(code="writes.feature_flag", status="pass", message="HTTP write endpoints are disabled for Phase 1", repair=None),
+            DoctorCheck(code="writes.authority", status="pass", message="chapter commit endpoints are enabled for Runtime-authority projects", repair=None),
         ]
         if deep and self.repository.integrity_check() != "ok":
             checks[1] = DoctorCheck(code="authority.integrity", status="fail", message="SQLite integrity check failed", repair="restore a verified snapshot")
@@ -162,10 +172,49 @@ class RuntimeServices:
         if projection["status"] == "ready":
             checks.append(DoctorCheck(code="projections.core", status="pass", message="all core projections are ready", repair=None))
         else:
-            checks.append(DoctorCheck(code="projections.core", status="warn", message="one or more projections require replay", repair="run projection replay after enabling the operator write flag"))
+            checks.append(DoctorCheck(code="projections.core", status="warning", message="one or more projections require replay", repair="preview projection replay, verify the hash, then confirm execution", retryable=True, requires_confirmation=True))
         for incident in self.repository.unresolved_incidents(project_id):
-            checks.append(DoctorCheck(code=f"incident.{incident['component']}", status="warn" if incident["retryable"] else "fail", message=incident["message"], repair=incident["repair_action"]))
-        status = "blocked" if any(c.status == "fail" for c in checks) else "warning" if any(c.status == "warn" for c in checks) else "ok"
+            checks.append(DoctorCheck(code=f"incident.{incident['component']}", status="warning" if incident["retryable"] else "fail", message=incident["message"], repair=incident["repair_action"], retryable=bool(incident["retryable"])))
+        if project.get("authority_mode") == "runtime":
+            with self.database.connect() as conn:
+                pending = [dict(row) for row in conn.execute(
+                    "SELECT commit_id,state,chapter_number FROM chapter_commits WHERE project_id=? AND state IN ('PREPARED','VALIDATED') ORDER BY updated_at",
+                    (project_id,),
+                )]
+                incomplete = [dict(row) for row in conn.execute(
+                    "SELECT commit_id,state,chapter_number FROM chapter_commits WHERE project_id=? AND state IN ('PERSISTING','COMMITTED','PROJECTING','RECOVERY_REQUIRED') ORDER BY updated_at",
+                    (project_id,),
+                )]
+                outbox_count = int(conn.execute("SELECT COUNT(*) FROM outbox WHERE project_id=? AND status IN ('pending','failed')", (project_id,)).fetchone()[0])
+                for row in pending:
+                    checks.append(DoctorCheck(
+                        code=f"commit.{row['commit_id']}", status="warning",
+                        message=f"chapter {row['chapter_number']} commit is {row['state']}",
+                        repair="resume with the same idempotency key or preview an abort", requires_confirmation=True,
+                    ))
+                for row in incomplete:
+                    checks.append(DoctorCheck(
+                        code=f"commit.{row['commit_id']}", status="fail",
+                        message=f"chapter {row['chapter_number']} commit requires recovery from {row['state']}",
+                        repair="run commit recovery with the original request; do not write legacy files",
+                    ))
+                if outbox_count:
+                    checks.append(DoctorCheck(
+                        code="outbox.pending", status="warning",
+                        message=f"{outbox_count} rebuildable side effects are pending",
+                        repair="retry the affected outbox item; core authority is already committed", retryable=True,
+                    ))
+                if deep:
+                    commit_service = ChapterCommitService(self.database)
+                    for checkpoint in conn.execute("SELECT projection_name,state_hash FROM projection_checkpoints WHERE project_id=? AND state_hash IS NOT NULL", (project_id,)):
+                        current_hash = commit_service.projection_hash(conn, project_id, [checkpoint["projection_name"]])
+                        if current_hash != checkpoint["state_hash"]:
+                            checks.append(DoctorCheck(
+                                code=f"projection.{checkpoint['projection_name']}.hash", status="fail",
+                                message="projection hash differs from its finalized checkpoint",
+                                repair=f"verify and replay projection {checkpoint['projection_name']}",
+                            ))
+        status = "blocked" if any(c.status in {"fail", "blocked"} for c in checks) else "warning" if any(c.status == "warning" for c in checks) else "ok"
         return DoctorResult(project_id=project_id, revision=project["revision"], status=status, checks=checks)
 
     def fixture_summary(self, project_id: str) -> dict[str, Any]:

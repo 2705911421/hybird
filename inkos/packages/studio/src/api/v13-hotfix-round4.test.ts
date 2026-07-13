@@ -30,7 +30,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
   class MockStateManager {
     constructor(private readonly root: string) {}
     async listBooks(): Promise<string[]> { return []; }
-    async loadBookConfig(): Promise<never> { throw new Error("not implemented"); }
+    async loadBookConfig(): Promise<{ authorityMode: "legacy" }> { return { authorityMode: "legacy" }; }
     async loadChapterIndex(): Promise<[]> { return []; }
     async getNextChapterNumber(): Promise<number> { return 1; }
     bookDir(id: string): string { return join(this.root, "books", id); }

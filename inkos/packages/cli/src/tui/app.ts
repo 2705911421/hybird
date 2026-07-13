@@ -2,6 +2,7 @@ import { access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { render } from "ink";
 import React from "react";
+import { appendInteractionMessage, loadProjectConfig, ReviewArtifactMapper, RuntimeReviewClient, StateManager } from "@actalk/inkos-core";
 import { InkTuiApp } from "./dashboard.js";
 import { formatModeLabel, getTuiCopy, normalizeStageLabel, resolveTuiLocale, type TuiLocale } from "./i18n.js";
 import { loadProjectSession } from "./session-store.js";
@@ -89,7 +90,37 @@ export async function launchTui(
     return;
   }
 
-  const session = await loadProjectSession(projectRoot);
+  let session = await loadProjectSession(projectRoot);
+  if (session.activeBookId) {
+    try {
+      const state = new StateManager(projectRoot);
+      const book = await state.loadBookConfig(session.activeBookId);
+      if (book.authorityMode === "runtime") {
+        const config = await loadProjectConfig(projectRoot);
+        if (config.storyRuntime.mode !== "legacy") {
+          const client = new RuntimeReviewClient({
+            baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
+            apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+          });
+          const project = await client.projectStatus(session.activeBookId);
+          const chapter = project.latest_chapter + 1;
+          const [artifacts, status] = await Promise.all([client.chapterReviews(session.activeBookId, chapter), client.reviewStatus(session.activeBookId, chapter)]);
+          if (status.status !== "clear" && status.status !== "unreviewed") {
+            const review = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
+            const note = [
+              `Runtime review for chapter ${chapter}: ${status.status}.`,
+              `Deterministic errors: ${review.deterministicFindings.length}; literary suggestions: ${review.literarySuggestions.length}.`,
+              ...(review.hasStaleEvidence ? ["Evidence is stale; re-audit is required."] : []),
+              ...review.blockingReasons.map((reason) => `Blocked: ${reason}`),
+            ].join("\n");
+            session = appendInteractionMessage(session, { role: "system", content: note, timestamp: Date.now() });
+          }
+        }
+      }
+    } catch {
+      // TUI remains usable when Runtime is offline; explicit review commands surface the error.
+    }
+  }
   const modelInfo = await detectModelInfo(projectRoot);
   const modelLabel = modelInfo
     ? `${modelInfo.model && modelInfo.model !== "unknown" ? modelInfo.model : copy.labels.unknown} (${modelInfo.provider})`

@@ -14,6 +14,8 @@ import {
   readCurrentStateWithFallback,
 } from "../utils/outline-paths.js";
 import { join } from "node:path";
+import { z } from "zod";
+import { parseUntrustedArtifact } from "../review-artifacts/untrusted-parser.js";
 
 export interface AuditResult {
   readonly passed: boolean;
@@ -39,6 +41,19 @@ export interface AuditIssue {
 }
 
 type PromptLanguage = "zh" | "en";
+
+const StrictAuditOutputSchema = z.object({
+  passed: z.boolean(),
+  issues: z.array(z.object({
+    severity: z.enum(["critical", "warning", "info"]),
+    category: z.string(),
+    description: z.string(),
+    suggestion: z.string(),
+    repair_scope: z.enum(["local", "structural", "unknown"]).optional(),
+  }).strict()),
+  summary: z.string(),
+  overall_score: z.number().min(0).max(100).optional(),
+}).strict();
 
 function normalizeRepairScope(value: unknown): AuditIssue["repairScope"] {
   if (value === "local" || value === "structural" || value === "unknown") return value;
@@ -388,6 +403,7 @@ export class ContinuityAuditor extends BaseAgent {
       chapterMemo?: ChapterMemo;
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
+      strictArtifactParsing?: boolean;
       truthFileOverrides?: {
         currentState?: string;
         ledger?: string;
@@ -658,8 +674,26 @@ ${chapterContent}`;
       ? await this.chatWithSearch(chatMessages, chatOptions)
       : await this.chat(chatMessages, chatOptions);
 
-    const result = this.parseAuditResult(response.content, resolvedLanguage);
+    const result = options?.strictArtifactParsing
+      ? this.parseStrictAuditResult(response.content)
+      : this.parseAuditResult(response.content, resolvedLanguage);
     return { ...result, tokenUsage: response.usage };
+  }
+
+  private parseStrictAuditResult(content: string): AuditResult {
+    const parsed = parseUntrustedArtifact(content, StrictAuditOutputSchema);
+    return {
+      passed: parsed.passed,
+      issues: parsed.issues.map((issue) => ({
+        severity: issue.severity,
+        category: issue.category,
+        description: issue.description,
+        suggestion: issue.suggestion,
+        ...(issue.repair_scope ? { repairScope: issue.repair_scope } : {}),
+      })),
+      summary: parsed.summary,
+      ...(parsed.overall_score !== undefined ? { overallScore: parsed.overall_score } : {}),
+    };
   }
 
   private parseAuditResult(content: string, language: PromptLanguage): AuditResult {

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/append-events-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["request_id", "project_id", "status", "revision", "event_count", "projection_hash", "replayed"],
+  "properties": {
+    "request_id": {"type": "string", "format": "uuid"}, "project_id": {"type": "string"},
+    "status": {"type": "string", "const": "completed"}, "revision": {"type": "integer", "minimum": 1},
+    "event_count": {"type": "integer", "minimum": 1}, "projection_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "replayed": {"type": "boolean"}
+  }
+}

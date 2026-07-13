@@ -31,3 +31,7 @@ class DatabaseUnavailableError(RuntimeErrorBase):
 
 class FeatureDisabledError(RuntimeErrorBase):
     pass
+
+
+class ConflictError(RuntimeErrorBase):
+    pass

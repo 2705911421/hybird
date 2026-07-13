@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: Hybrid Story Runtime API
-  version: 0.1.0-draft
+  version: 0.6.0
   description: >-
     Versioned boundary between InkOS TypeScript application services and the
     Python Story Runtime. The runtime is the only writer of authoritative
-    long-form story state. This draft is not an implementation commitment.
+    long-form story state for Runtime-authority projects.
 servers:
   - url: http://127.0.0.1:{port}/api/story-runtime/v1
     variables:
@@ -19,6 +19,8 @@ tags:
   - name: Chapter
   - name: Events
   - name: Operations
+  - name: Observability
+  - name: Recovery
 
 paths:
   /health:
@@ -34,6 +36,35 @@ paths:
               schema:
                 $ref: ./schemas/health-response.json
 
+  /projects:
+    post:
+      tags: [System]
+      operationId: createRuntimeProject
+      description: Create a new project whose canonical writes are exclusively owned by Story Runtime.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/create-project-request.json
+      responses:
+        "200":
+          description: Runtime authority project created or idempotently replayed
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [project_id, authority_mode, revision, replayed]
+                properties:
+                  project_id: { type: string }
+                  authority_mode: { type: string, const: runtime }
+                  revision: { type: integer, minimum: 0 }
+                  replayed: { type: boolean }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /projects/{project_id}/status:
     get:
       tags: [System]
@@ -48,6 +79,148 @@ paths:
               schema:
                 $ref: ./schemas/project-status-response.json
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/{project_id}/overview:
+    get:
+      tags: [Observability]
+      operationId: getRuntimeOverview
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      responses:
+        "200": { description: Redacted project overview, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/overview" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/{project_id}/commits:
+    get:
+      tags: [Observability]
+      operationId: listCommits
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { name: chapter, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: from_date, in: query, schema: { type: string, format: date-time } }
+        - { name: to_date, in: query, schema: { type: string, format: date-time } }
+      responses:
+        "200": { description: Cursor-paginated commits, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/commitList" } } } }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/commits/{commit_id}:
+    get:
+      tags: [Observability]
+      operationId: getCommitDetail
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { name: commit_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Commit transitions and redacted detail, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/commitDetail" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/{project_id}/events:
+    get:
+      tags: [Observability]
+      operationId: listEvents
+      description: Summary is the default. Full large payloads are never returned by this endpoint.
+      parameters:
+        - { $ref: "#/components/parameters/ProjectId" }
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { name: event_type, in: query, schema: { type: string } }
+        - { name: aggregate, in: query, schema: { type: string } }
+        - { name: chapter, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: revision, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: view, in: query, schema: { type: string, enum: [summary, evidence], default: summary } }
+      responses:
+        "200": { description: Cursor-paginated event timeline, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/eventList" } } } }
+
+  /projects/{project_id}/projections:
+    get:
+      tags: [Observability]
+      operationId: listProjections
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      responses:
+        "200": { description: Projection checkpoints, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/projectionList" } } } }
+
+  /projects/{project_id}/reviews/status:
+    get:
+      tags: [Observability]
+      operationId: getReviewOverview
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      responses:
+        "200": { description: Aggregate review status, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/reviewOverview" } } } }
+
+  /migration/status:
+    get:
+      tags: [Observability]
+      operationId: getMigrationStatus
+      responses:
+        "200": { description: Read-only migration status, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/migration" } } } }
+
+  /configuration/status:
+    get:
+      tags: [Observability]
+      operationId: getRuntimeConfigurationStatus
+      responses:
+        "200": { description: Non-secret Runtime configuration status, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/configuration" } } } }
+
+  /projects/{project_id}/diagnostics:
+    get:
+      tags: [Observability]
+      operationId: downloadDiagnosticReport
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      responses:
+        "200": { description: Redacted diagnostic report without prose content, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/diagnosticReport" } } } }
+
+  /projects/{project_id}/recovery-jobs:
+    get:
+      tags: [Recovery]
+      operationId: listRecoveryJobs
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }, { $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/PageLimit" }]
+      responses:
+        "200": { description: Recovery audit history, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/recoveryJobList" } } } }
+
+  /projects/{project_id}/recovery-jobs/preview:
+    post:
+      tags: [Recovery]
+      operationId: previewRecovery
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [operation, parameters, actor], properties: { operation: { type: string }, parameters: { type: object }, actor: { type: string, minLength: 1 } } } } }
+      responses:
+        "200": { description: Dry-run preview and optional confirmation token, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/recoveryJob" } } } }
+
+  /projects/{project_id}/recovery-jobs/{job_id}:
+    get:
+      tags: [Recovery]
+      operationId: getRecoveryJob
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }, { name: job_id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: Recovery progress and audit, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/recoveryJob" } } } }
+
+  /projects/{project_id}/recovery-jobs/{job_id}/execute:
+    post:
+      tags: [Recovery]
+      operationId: executeRecovery
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }, { name: job_id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [actor], properties: { actor: { type: string }, confirmation_token: { type: [string, "null"] } } } } }
+      responses:
+        "200": { description: Recovery result, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/recoveryJob" } } } }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+
+  /projects/{project_id}/recovery-jobs/{job_id}/cancel:
+    post:
+      tags: [Recovery]
+      operationId: cancelRecovery
+      parameters: [{ $ref: "#/components/parameters/ProjectId" }, { name: job_id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, additionalProperties: false, required: [actor], properties: { actor: { type: string } } } } }
+      responses:
+        "200": { description: Cancelled safe job, content: { application/json: { schema: { $ref: "./schemas/runtime-observability.json#/$defs/recoveryJob" } } } }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
 
   /queries/context:
     post:
@@ -96,6 +269,22 @@ paths:
                 $ref: "#/components/schemas/EntityResult"
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /projects/{project_id}/chapters/{chapter_number}:
+    get:
+      tags: [Query]
+      operationId: getFinalizedChapter
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: chapter_number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Finalized authoritative chapter artifact
+          content: { application/json: { schema: { $ref: ./schemas/chapter-artifact-response.json } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /chapters/prepare:
     post:
       tags: [Chapter]
@@ -107,7 +296,9 @@ paths:
             schema:
               $ref: ./schemas/prepare-chapter-request.json
       responses:
-        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "200":
+          description: Durable PREPARED commit
+          content: { application/json: { schema: { $ref: ./schemas/prepare-chapter-response.json } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -123,7 +314,9 @@ paths:
             schema:
               $ref: ./schemas/validate-chapter-artifacts-request.json
       responses:
-        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "200":
+          description: Deterministic validation result
+          content: { application/json: { schema: { $ref: ./schemas/validate-chapter-response.json } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -142,7 +335,9 @@ paths:
             schema:
               $ref: ./schemas/commit-chapter-request.json
       responses:
-        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "200":
+          description: Atomically finalized chapter commit
+          content: { application/json: { schema: { $ref: ./schemas/finalized-commit-response.json } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -159,7 +354,9 @@ paths:
             schema:
               $ref: ./schemas/append-events-request.json
       responses:
-        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "200":
+          description: Operator events appended and projected
+          content: { application/json: { schema: { $ref: ./schemas/append-events-response.json } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -175,7 +372,45 @@ paths:
             schema:
               $ref: ./schemas/replay-projections-request.json
       responses:
-        "200": { $ref: "#/components/responses/OperationCompleted" }
+        "200":
+          description: Projection replay or verification result
+          content: { application/json: { schema: { $ref: ./schemas/replay-projections-response.json } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /commits/recover:
+    post:
+      tags: [Operations]
+      operationId: recoverCommit
+      description: Operator-only abort or recovery from the stored validated artifact.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommitRecoveryRequest" }
+      responses:
+        "200":
+          description: Durable recovery result
+          content: { application/json: { schema: { $ref: "#/components/schemas/CommitRecoveryResult" } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /outbox/run:
+    post:
+      tags: [Operations]
+      operationId: runOutbox
+      description: Executes rebuildable non-authoritative projections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OutboxRunRequest" }
+      responses:
+        "200":
+          description: Outbox batch result
+          content: { application/json: { schema: { $ref: "#/components/schemas/OutboxRunResult" } } }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -196,6 +431,97 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DoctorResult"
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /reviews/validate:
+    post:
+      tags: [Reviews]
+      operationId: validateReviews
+      description: Validates and durably stores versioned review artifacts as untrusted input.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: ./schemas/validate-reviews-request.json }
+      responses:
+        "200": { description: Review validation result, content: { application/json: { schema: { $ref: ./schemas/review-validation-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /reviews/decisions:
+    post:
+      tags: [Reviews]
+      operationId: storeReviewDecision
+      description: Stores an idempotent, revision-bound human review decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: ./schemas/store-review-decision-request.json }
+      responses:
+        "200": { description: Stored human review decision, content: { application/json: { schema: { $ref: "./schemas/review-artifacts.json#/$defs/humanReviewDecision" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/chapters/{chapter_number}/reviews:
+    get:
+      tags: [Reviews]
+      operationId: getChapterReviews
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: chapter_number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Validated review artifacts for the chapter, content: { application/json: { schema: { type: array, items: { $ref: "./schemas/review-artifacts.json#/$defs/chapterReviewArtifact" } } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /revisions/validate:
+    post:
+      tags: [Reviews]
+      operationId: validateRevision
+      description: Validates revision artifacts and invalidates stale evidence before re-audit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: ./schemas/validate-revision-request.json }
+      responses:
+        "200": { description: Validated revision result, content: { application/json: { schema: { $ref: "./schemas/review-artifacts.json#/$defs/revisionResult" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
+  /projects/{project_id}/chapters/{chapter_number}/review-status:
+    get:
+      tags: [Reviews]
+      operationId: getChapterReviewStatus
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: chapter_number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Effective review gate status, content: { application/json: { schema: { $ref: ./schemas/review-status-response.json } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /projects/{project_id}/chapters/{chapter_number}/revision-diff:
+    get:
+      tags: [Reviews]
+      operationId: getChapterRevisionDiff
+      description: Returns the latest Runtime-validated before/after revision bodies and changed spans.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: chapter_number
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Validated revision diff, content: { application/json: { schema: { $ref: ./schemas/revision-diff-response.json } } } }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /projects/migrate:
@@ -247,6 +573,15 @@ components:
         minLength: 1
         maxLength: 128
         pattern: "^[A-Za-z0-9._-]+$"
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: Opaque cursor bound to project, collection and filters.
+    PageLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
   responses:
     OperationCompleted:
       description: Operation result; replayed=true means an idempotent retry.
@@ -279,6 +614,50 @@ components:
           schema:
             $ref: ./schemas/error-response.json
   schemas:
+    CommitRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, project_id, commit_id, idempotency_key, action, reason, admin_scope]
+      properties:
+        request_id: { type: string, format: uuid }
+        project_id: { type: string, minLength: 1, maxLength: 128 }
+        commit_id: { type: string, format: uuid }
+        idempotency_key: { type: string, minLength: 16, maxLength: 200 }
+        action: { type: string, enum: [recover, abort] }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+        admin_scope: { type: string, const: story-runtime.commits.recover }
+    CommitRecoveryResult:
+      type: object
+      additionalProperties: false
+      required: [request_id, project_id, commit_id, state, resulting_revision, repair_action, replayed]
+      properties:
+        request_id: { type: string, format: uuid }
+        project_id: { type: string }
+        commit_id: { type: string, format: uuid }
+        state: { type: string }
+        resulting_revision: { type: [integer, "null"], minimum: 0 }
+        repair_action: { type: string }
+        replayed: { type: boolean }
+    OutboxRunRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, limit, retry_failed, admin_scope]
+      properties:
+        request_id: { type: string, format: uuid }
+        project_id: { type: [string, "null"], maxLength: 128 }
+        limit: { type: integer, minimum: 1, maximum: 1000 }
+        retry_failed: { type: boolean }
+        admin_scope: { type: string, const: story-runtime.outbox.run }
+    OutboxRunResult:
+      type: object
+      additionalProperties: false
+      required: [request_id, claimed, completed, failed, pending]
+      properties:
+        request_id: { type: string, format: uuid }
+        claimed: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
     ContextQueryResult:
       type: object
       additionalProperties: false
@@ -396,9 +775,11 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [code, status, message, repair]
+            required: [code, status, message, repair, retryable, requires_confirmation]
             properties:
               code: { type: string }
-              status: { type: string, enum: [pass, warn, fail] }
+              status: { type: string, enum: [pass, warning, fail, blocked] }
               message: { type: string }
               repair: { type: [string, "null"] }
+              retryable: { type: boolean }
+              requires_confirmation: { type: boolean }

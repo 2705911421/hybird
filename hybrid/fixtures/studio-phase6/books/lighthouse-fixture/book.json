@@ -1,0 +1,12 @@
+{
+  "id": "lighthouse-fixture",
+  "title": "The Lighthouse Fixture",
+  "platform": "other",
+  "genre": "sci-fi",
+  "status": "active",
+  "targetChapters": 12,
+  "chapterWordCount": 2500,
+  "authorityMode": "runtime",
+  "createdAt": "2026-07-12T00:00:00.000Z",
+  "updatedAt": "2026-07-12T00:00:00.000Z"
+}

@@ -20,6 +20,8 @@ export interface ChapterReviewCycleControlInput {
 }
 
 export interface ChapterReviewCycleResult {
+  readonly originalContent: string;
+  readonly initialAuditResult: AuditResult;
   readonly finalContent: string;
   readonly finalWordCount: number;
   readonly preAuditNormalizedWordCount: number;
@@ -80,6 +82,7 @@ export async function runChapterReviewCycle(params: {
         chapterMemo?: ChapterMemo;
         contextPackage?: ContextPackage;
         ruleStack?: RuleStack;
+        strictArtifactParsing?: boolean;
       },
     ) => Promise<AuditResult>;
   };
@@ -103,6 +106,7 @@ export async function runChapterReviewCycle(params: {
   /** Re-run deterministic post-write checks (chapter-ref, paragraph shape, etc.) on any content. */
   readonly runPostWriteChecks?: (content: string) => ReadonlyArray<AuditIssue>;
   readonly maxReviewIterations?: number;
+  readonly strictArtifactParsing?: boolean;
   readonly logWarn: (message: { zh: string; en: string }) => void;
   readonly logStage: (message: { zh: string; en: string }) => void;
 }): Promise<ChapterReviewCycleResult> {
@@ -150,14 +154,17 @@ export async function runChapterReviewCycle(params: {
     content: string,
     options?: { temperature?: number },
   ): Promise<{ auditResult: AuditResult; score: number; lengthInRange: boolean }> => {
+    const auditOptions = {
+      ...(params.reducedControlInput ?? {}),
+      ...(options ?? {}),
+      ...(params.strictArtifactParsing ? { strictArtifactParsing: true } : {}),
+    };
     const llmAudit = await params.auditor.auditChapter(
       params.bookDir,
       content,
       params.chapterNumber,
       params.book.genre,
-      params.reducedControlInput
-        ? { ...params.reducedControlInput, ...(options ?? {}) }
-        : options,
+      Object.keys(auditOptions).length > 0 ? auditOptions : undefined,
     );
     totalUsage = params.addUsage(totalUsage, llmAudit.tokenUsage);
     const aiTellsResult = params.analyzeAITells(content);
@@ -206,6 +213,7 @@ export async function runChapterReviewCycle(params: {
   const maxReviewIterations = Math.max(0, Math.floor(params.maxReviewIterations ?? DEFAULT_MAX_REVIEW_ITERATIONS));
   params.logStage({ zh: "审计草稿", en: "auditing draft" });
   const initial = await assess(finalContent);
+  const originalContent = finalContent;
 
   const snapshots: ReviewSnapshot[] = [{
     content: finalContent,
@@ -224,6 +232,8 @@ export async function runChapterReviewCycle(params: {
       en: "Audit output parsing failed; skipping automatic repair to avoid rewriting valid prose from an unreliable audit.",
     });
     return {
+      originalContent,
+      initialAuditResult: initial.auditResult,
       finalContent,
       finalWordCount,
       preAuditNormalizedWordCount: finalWordCount,
@@ -340,6 +350,8 @@ export async function runChapterReviewCycle(params: {
   }
 
   return {
+    originalContent,
+    initialAuditResult: initial.auditResult,
     finalContent,
     finalWordCount,
     preAuditNormalizedWordCount: finalWordCount,

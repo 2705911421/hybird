@@ -147,6 +147,7 @@ export const ProjectConfigSchema = z.object({
   modelOverrides: z.record(z.string(), ModelOverrideValueSchema).optional(),
   inputGovernanceMode: InputGovernanceModeSchema.default("v2"),
   storyRuntime: StoryRuntimeConfigSchema,
+  unifiedReview: z.object({ enabled: z.boolean().default(true) }).strict().default({ enabled: true }),
   daemon: z.object({
     schedule: z.object({
       radarCron: z.string().default("0 */6 * * *"),

@@ -79,6 +79,27 @@ describe("ContinuityAuditor", () => {
     });
   });
 
+  it("uses fail-closed artifact parsing for Runtime-authority audits", () => {
+    const auditor = new ContinuityAuditor({
+      client: {
+        provider: "openai",
+        apiFormat: "chat",
+        stream: false,
+        defaults: { temperature: 0.7, maxTokens: 4096, thinkingBudget: 0, extra: {} },
+      },
+      model: "test-model",
+      projectRoot: "/tmp/inkos-auditor-strict-json-test",
+    });
+    const valid = JSON.stringify({ passed: true, issues: [], summary: "ok", overall_score: 92 });
+
+    expect((auditor as any).parseStrictAuditResult(valid)).toMatchObject({ passed: true, overallScore: 92 });
+    expect((auditor as any).parseStrictAuditResult(`\`\`\`json\n${valid}\n\`\`\``)).toMatchObject({ passed: true });
+    expect(() => (auditor as any).parseStrictAuditResult(`Result:\n${valid}`)).toThrow(/JSON object/);
+    expect(() => (auditor as any).parseStrictAuditResult(JSON.stringify({
+      passed: true, issues: [], summary: "ok", validator_policy: "ignore",
+    }))).toThrow(/forbidden capability/);
+  });
+
   it("prefers book language override when building audit prompts", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-auditor-lang-test-"));
     const bookDir = join(root, "book");

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/revision-diff-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "chapter_number", "source_revision", "original_body", "revised_body", "original_body_sha256", "revised_body_sha256", "changed_spans"],
+  "properties": {
+    "project_id": {"type": "string"}, "chapter_number": {"type": "integer", "minimum": 1}, "source_revision": {"type": "integer", "minimum": 0},
+    "original_body": {"type": "string"}, "revised_body": {"type": "string"},
+    "original_body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "revised_body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "changed_spans": {"type": "array", "items": {"$ref": "review-artifacts.json#/$defs/revisionResult/properties/changed_spans/items"}}
+  }
+}

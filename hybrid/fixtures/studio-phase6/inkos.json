@@ -1,0 +1,22 @@
+{
+  "name": "Phase 6 Studio Fixture",
+  "version": "0.1.0",
+  "language": "en",
+  "languageExplicit": true,
+  "llm": {
+    "provider": "openai",
+    "baseUrl": "http://127.0.0.1:9/v1",
+    "apiKey": "",
+    "model": "deterministic-fixture"
+  },
+  "notify": [],
+  "storyRuntime": {
+    "mode": "story-runtime",
+    "baseUrl": "http://127.0.0.1:47831",
+    "apiTokenEnv": "PHASE6_E2E_TOKEN",
+    "timeoutMs": 3000,
+    "maxContextTokens": 16000,
+    "maxItems": 100,
+    "fallbackOnUnavailable": false
+  }
+}

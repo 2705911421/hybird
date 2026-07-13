@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/validate-revision-request.json",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["chapter_number", "original_body", "revised_body", "plan", "result"],
+      "properties": {
+        "chapter_number": {"type": "integer", "minimum": 1},
+        "original_body": {"type": "string", "maxLength": 2000000},
+        "revised_body": {"type": "string", "maxLength": 2000000},
+        "plan": {"$ref": "review-artifacts.json#/$defs/revisionPlan"},
+        "result": {"$ref": "review-artifacts.json#/$defs/revisionResult"}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

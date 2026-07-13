@@ -1,6 +1,30 @@
 import { Command } from "commander";
-import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
-import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { randomUUID } from "node:crypto";
+import { ReviewArtifactMapper, RuntimeReviewClient, StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
+import { findProjectRoot, resolveBookId, loadConfig, log, logError } from "../utils.js";
+
+async function runtimeReviewClient(root: string): Promise<RuntimeReviewClient> {
+  const config = await loadConfig({ requireApiKey: false, projectRoot: root });
+  if (config.storyRuntime.mode === "legacy") throw new Error("Runtime authority requires Story Runtime to be enabled.");
+  return new RuntimeReviewClient({
+    baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
+    apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+  });
+}
+
+async function storeRuntimeDecision(input: { root: string; bookId: string; chapter: number; decision: "approve" | "reject" | "request_changes"; comment: string }) {
+  const client = await runtimeReviewClient(input.root);
+  const status = await client.reviewStatus(input.bookId, input.chapter);
+  return client.storeReviewDecision({
+    projectId: input.bookId, idempotencyKey: `cli-review-${randomUUID()}`, expectedRevision: status.revision,
+    decision: {
+      decision_id: randomUUID(), schema_version: "review-artifacts/v1", project_id: input.bookId,
+      chapter_number: input.chapter, reviewer: process.env.USERNAME || process.env.USER || "cli-user",
+      decision: input.decision, finding_decisions: {}, comment: input.comment,
+      timestamp: new Date().toISOString(), source_revision: status.revision,
+    },
+  });
+}
 
 export const reviewCommand = new Command("review")
   .description("Review and approve chapters");
@@ -27,7 +51,24 @@ reviewCommand
       }> = [];
 
       for (const id of bookIds) {
+        const book = await state.loadBookConfig(id);
         const index = await state.loadChapterIndex(id);
+        if (book.authorityMode === "runtime") {
+          const client = await runtimeReviewClient(root);
+          for (const ch of index) {
+            const [artifacts, status] = await Promise.all([client.chapterReviews(id, ch.number), client.reviewStatus(id, ch.number)]);
+            if (status.status === "clear") continue;
+            const view = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
+            const issues = view.findings.map((finding) => `[${finding.source}/${finding.severity}${finding.blocking ? "/blocking" : ""}] ${finding.message}`);
+            allPending.push({ bookId: id, title: book.title, chapter: ch.number, chapterTitle: ch.title, wordCount: ch.wordCount, status: status.status, issues });
+            if (!opts.json) {
+              log(`  Ch.${ch.number} "${ch.title}" | ${ch.wordCount} | ${status.status}`);
+              for (const issue of issues) log(`    - ${issue}`);
+              for (const reason of view.blockingReasons) log(`    blocked: ${reason}`);
+            }
+          }
+          continue;
+        }
         const pending = index.filter(
           (ch) =>
             ch.status === "ready-for-review" || ch.status === "audit-failed",
@@ -35,7 +76,6 @@ reviewCommand
 
         if (pending.length === 0) continue;
 
-        const book = await state.loadBookConfig(id);
         const { profile: genreProfile } = await readGenreProfile(root, book.genre);
         const countingMode = resolveLengthCountingMode(book.language ?? genreProfile.language);
 
@@ -116,6 +156,13 @@ reviewCommand
       const bookId = await resolveBookId(bookIdArg, root);
 
       const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
+      if (book.authorityMode === "runtime") {
+        await storeRuntimeDecision({ root, bookId, chapter: chapterNum, decision: "approve", comment: "Approved from InkOS CLI." });
+        if (opts.json) log(JSON.stringify({ bookId, chapter: chapterNum, status: "approved", authority: "runtime" }));
+        else log(`Chapter ${chapterNum} approved by Story Runtime.`);
+        return;
+      }
       const index = [...(await state.loadChapterIndex(bookId))];
       const idx = index.findIndex((ch) => ch.number === chapterNum);
       if (idx === -1) {
@@ -154,6 +201,10 @@ reviewCommand
       const root = findProjectRoot();
       const bookId = await resolveBookId(bookIdArg, root);
       const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
+      if (book.authorityMode === "runtime") {
+        throw new Error("Bulk approval is disabled for Runtime-authority books; review each chapter and its blocking findings explicitly.");
+      }
 
       const index = [...(await state.loadChapterIndex(bookId))];
       let count = 0;
@@ -198,6 +249,13 @@ reviewCommand
       const bookId = await resolveBookId(bookIdArg, root);
 
       const state = new StateManager(root);
+      const book = await state.loadBookConfig(bookId);
+      if (book.authorityMode === "runtime") {
+        await storeRuntimeDecision({ root, bookId, chapter: chapterNum, decision: "reject", comment: opts.reason ?? "Rejected from InkOS CLI." });
+        if (opts.json) log(JSON.stringify({ bookId, chapter: chapterNum, status: "rejected", authority: "runtime" }));
+        else log(`Chapter ${chapterNum} rejected by Story Runtime. No local Truth or chapter rollback was performed.`);
+        return;
+      }
       const index = await state.loadChapterIndex(bookId);
       const idx = index.findIndex((ch) => ch.number === chapterNum);
       if (idx === -1) {

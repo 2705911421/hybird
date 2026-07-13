@@ -32,6 +32,7 @@ import type { LengthSpec, LengthTelemetry } from "../models/length-governance.js
 import type { ChapterMemo, ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { ContextCompressionCallback } from "../models/context-compression.js";
 import type { StoryRuntimeConfig } from "../story-runtime/schemas.js";
+import { StoryRuntimeClient } from "../story-runtime/client.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { buildWritingMethodologySection } from "../utils/writing-methodology.js";
@@ -50,7 +51,8 @@ import {
   resolveStateDegradedBaseStatus,
   retrySettlementAfterValidationFailure,
 } from "./chapter-state-recovery.js";
-import { persistChapterArtifacts } from "./chapter-persistence.js";
+import { LegacyChapterPersistence, StoryRuntimeChapterPersistence } from "./chapter-persistence-port.js";
+import { InkOSReviewAdapter, InkOSRevisionAdapter } from "../review-artifacts/adapters.js";
 import { runChapterReviewCycle } from "./chapter-review-cycle.js";
 import { validateChapterTruthPersistence } from "./chapter-truth-validation.js";
 import { loadPersistedPlan, relativeToBookDir, savePersistedPlan } from "./persisted-governed-plan.js";
@@ -285,6 +287,7 @@ export interface PipelineConfig {
   readonly onStreamProgress?: OnStreamProgress;
   readonly onContextCompression?: ContextCompressionCallback;
   readonly storyRuntime?: StoryRuntimeConfig;
+  readonly unifiedReviewEnabled?: boolean;
 }
 
 export interface TokenUsageSummary {
@@ -1069,6 +1072,10 @@ export class PipelineRunner {
 
   /** Write a single draft chapter. Saves chapter file + truth files + index + snapshot. */
   async writeDraft(bookId: string, context?: string, wordCount?: number): Promise<DraftResult> {
+    const authorityBook = await this.state.loadBookConfig(bookId);
+    if (authorityBook.authorityMode === "runtime") {
+      throw new Error("writeDraft cannot persist chapter files for a Runtime-authority project; use writeNextChapter.");
+    }
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       await this.state.ensureControlDocuments(bookId);
@@ -1316,6 +1323,10 @@ export class PipelineRunner {
 
   /** Revise the latest (or specified) chapter based on audit issues. */
   async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE, externalContext?: string): Promise<ReviseResult> {
+    const authorityBook = await this.state.loadBookConfig(bookId);
+    if (authorityBook.authorityMode === "runtime") {
+      throw new Error("Finalized Runtime chapters cannot be revised through the legacy file workflow.");
+    }
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -1701,11 +1712,24 @@ export class PipelineRunner {
     externalContext?: string,
   ): Promise<ChapterPipelineResult> {
     this.throwIfOperationAborted();
-    await this.state.ensureControlDocuments(bookId);
     const book = await this.state.loadBookConfig(bookId);
+    const runtimeAuthority = book.authorityMode === "runtime";
+    if (!runtimeAuthority) await this.state.ensureControlDocuments(bookId);
     const bookDir = this.state.bookDir(bookId);
-    await this.assertNoPendingStateRepair(bookId);
-    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    if (!runtimeAuthority) await this.assertNoPendingStateRepair(bookId);
+    const runtimeConfig = this.config.storyRuntime;
+    if (runtimeAuthority && (!runtimeConfig || runtimeConfig.mode === "legacy")) {
+      throw new Error("Runtime authority requires a configured Story Runtime connection.");
+    }
+    const runtimeClient = runtimeAuthority && runtimeConfig
+      ? new StoryRuntimeClient({ baseUrl: runtimeConfig.baseUrl, timeoutMs: runtimeConfig.timeoutMs,
+          apiToken: runtimeConfig.apiTokenEnv ? process.env[runtimeConfig.apiTokenEnv] : undefined })
+      : undefined;
+    const runtimeStatus = runtimeClient ? await runtimeClient.projectStatus(bookId) : undefined;
+    if (runtimeStatus && runtimeStatus.authority_mode !== "runtime") {
+      throw new Error(`Story Runtime project "${bookId}" is not Runtime authority.`);
+    }
+    const chapterNumber = runtimeStatus ? runtimeStatus.latest_chapter + 1 : await this.state.getNextChapterNumber(bookId);
     const stageLanguage = await this.resolveBookLanguage(book);
     this.logStage(stageLanguage, { zh: "准备章节输入", en: "preparing chapter inputs" });
     const writeInput = await this.prepareWriteInput(
@@ -1791,6 +1815,7 @@ export class PipelineRunner {
         reducedControlInput,
         lengthSpec,
         initialUsage: totalUsage,
+        strictArtifactParsing: Boolean(runtimeClient && (this.config.unifiedReviewEnabled ?? true)),
         createReviser: () => new ReviserAgent(this.agentCtxFor("reviser", bookId)),
         auditor,
         normalizeDraftLengthIfNeeded: (chapterContent) => this.normalizeDraftLengthIfNeeded({
@@ -1835,6 +1860,40 @@ export class PipelineRunner {
       postReviseCount = reviewResult.postReviseCount;
       normalizeApplied = reviewResult.normalizeApplied;
       preAuditNormalizedWordCount = reviewResult.preAuditNormalizedWordCount;
+      if (runtimeClient && reviewResult.revised && (this.config.unifiedReviewEnabled ?? true)) {
+        const reviewAdapter = new InkOSReviewAdapter();
+        const revisionAdapter = new InkOSRevisionAdapter();
+        const initialArtifact = reviewAdapter.fromLegacyAudit({
+          projectId: bookId, chapterNumber, sourceRevision: runtimeStatus!.revision,
+          body: reviewResult.originalContent, reviewerKind: "auditor", reviewerVersion: "inkos-1.7",
+          result: reviewResult.initialAuditResult,
+        });
+        await runtimeClient.validateReviews({
+          projectId: bookId, expectedRevision: runtimeStatus!.revision,
+          idempotencyKey: `review-before-revision:${chapterNumber}:${initialArtifact.body_sha256}`,
+          chapterNumber, body: reviewResult.originalContent, artifacts: [initialArtifact],
+        });
+        const plan = revisionAdapter.createPlan({
+          projectId: bookId, chapterNumber, sourceRevision: runtimeStatus!.revision,
+          body: reviewResult.originalContent, findings: initialArtifact.findings,
+          allowedScopes: ["chapter_body"], forbiddenHardFacts: [],
+          targetOutcomes: initialArtifact.findings.map((finding) => finding.message),
+        });
+        const revisionResult = revisionAdapter.toResult({
+          plan, originalBody: reviewResult.originalContent,
+          output: {
+            revisedContent: reviewResult.finalContent, wordCount: reviewResult.finalWordCount,
+            fixedIssues: reviewResult.auditResult.passed ? plan.finding_ids : [],
+            updatedState: "", updatedLedger: "", updatedHooks: "",
+          },
+        });
+        await runtimeClient.validateRevision({
+          projectId: bookId, expectedRevision: runtimeStatus!.revision,
+          idempotencyKey: `revision:${chapterNumber}:${revisionResult.revised_body_sha256}`,
+          chapterNumber, originalBody: reviewResult.originalContent, revisedBody: reviewResult.finalContent,
+          plan, result: revisionResult,
+        });
+      }
     }
 
     this.throwIfOperationAborted();
@@ -1959,7 +2018,12 @@ export class PipelineRunner {
       readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
     ]);
     const validator = new StateValidatorAgent(this.agentCtxFor("state-validator", bookId));
-    const truthValidation = await validateChapterTruthPersistence({
+    const truthValidation = runtimeAuthority ? {
+      chapterStatus: null,
+      degradedIssues: [] as ReadonlyArray<AuditIssue>,
+      persistenceOutput,
+      auditResult,
+    } : await validateChapterTruthPersistence({
       writer,
       validator,
       book,
@@ -2024,9 +2088,12 @@ export class PipelineRunner {
     }
 
     const resolvedStatus = chapterStatus ?? (auditResult.passed ? "ready-for-review" : "audit-failed");
-    await persistChapterArtifacts({
-      chapterNumber,
-      chapterTitle: persistenceOutput.title,
+    const persistence = runtimeClient
+      ? new StoryRuntimeChapterPersistence(runtimeClient, this.config.unifiedReviewEnabled ?? true)
+      : new LegacyChapterPersistence();
+    await persistence.persist({
+      projectId: bookId,
+      output: persistenceOutput,
       status: resolvedStatus,
       auditResult,
       finalWordCount,
@@ -2034,26 +2101,26 @@ export class PipelineRunner {
       lengthTelemetry,
       degradedIssues,
       tokenUsage: totalUsage,
-      loadChapterIndex: () => this.state.loadChapterIndex(bookId),
-      saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang),
-      saveTruthFiles: async () => {
-        await writer.saveNewTruthFiles(bookDir, persistenceOutput, pipelineLang);
-        await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, persistenceOutput);
-        this.logStage(stageLanguage, { zh: "同步记忆索引", en: "syncing memory indexes" });
-        await this.syncNarrativeMemoryIndex(bookId);
+      intent: (reducedControlInput?.chapterIntentData ?? {}) as Record<string, unknown>,
+      legacy: {
+        loadChapterIndex: () => this.state.loadChapterIndex(bookId),
+        saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang),
+        saveTruthFiles: async () => {
+          await writer.saveNewTruthFiles(bookDir, persistenceOutput, pipelineLang);
+          await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, persistenceOutput);
+          this.logStage(stageLanguage, { zh: "同步记忆索引", en: "syncing memory indexes" });
+          await this.syncNarrativeMemoryIndex(bookId);
+        },
+        saveChapterIndex: (index) => this.state.saveChapterIndex(bookId, index),
+        markBookActiveIfNeeded: () => this.markBookActiveIfNeeded(bookId),
+        persistAuditDriftGuidance: (issues) => this.persistAuditDriftGuidance({
+          bookDir, chapterNumber, issues, language: stageLanguage,
+        }).catch(() => undefined),
+        snapshotState: () => this.state.snapshotState(bookId, chapterNumber),
+        syncCurrentStateFactHistory: () => this.syncCurrentStateFactHistory(bookId, chapterNumber),
+        logSnapshotStage: () =>
+          this.logStage(stageLanguage, { zh: "更新章节索引与快照", en: "updating chapter index and snapshots" }),
       },
-      saveChapterIndex: (index) => this.state.saveChapterIndex(bookId, index),
-      markBookActiveIfNeeded: () => this.markBookActiveIfNeeded(bookId),
-      persistAuditDriftGuidance: (issues) => this.persistAuditDriftGuidance({
-        bookDir,
-        chapterNumber,
-        issues,
-        language: stageLanguage,
-      }).catch(() => undefined),
-      snapshotState: () => this.state.snapshotState(bookId, chapterNumber),
-      syncCurrentStateFactHistory: () => this.syncCurrentStateFactHistory(bookId, chapterNumber),
-      logSnapshotStage: () =>
-        this.logStage(stageLanguage, { zh: "更新章节索引与快照", en: "updating chapter index and snapshots" }),
     });
 
     // 6. Send notification
@@ -2102,6 +2169,7 @@ export class PipelineRunner {
 
   private async _repairChapterStateLocked(bookId: string, chapterNumber?: number): Promise<ChapterPipelineResult> {
     const book = await this.state.loadBookConfig(bookId);
+    if (book.authorityMode === "runtime") throw new Error("Runtime-authority state repair must run through Story Runtime doctor/replay.");
     const bookDir = this.state.bookDir(bookId);
     const stageLanguage = await this.resolveBookLanguage(book);
     const index = [...(await this.state.loadChapterIndex(bookId))];
@@ -2222,6 +2290,7 @@ export class PipelineRunner {
 
   private async _resyncChapterArtifactsLocked(bookId: string, chapterNumber?: number): Promise<ChapterPipelineResult> {
     const book = await this.state.loadBookConfig(bookId);
+    if (book.authorityMode === "runtime") throw new Error("Runtime-authority projects cannot resync canonical state from Markdown.");
     const bookDir = this.state.bookDir(bookId);
     const stageLanguage = await this.resolveBookLanguage(book);
     const index = [...(await this.state.loadChapterIndex(bookId))];
@@ -2735,6 +2804,7 @@ ${matrix}`,
     const releaseLock = await this.state.acquireBookLock(input.bookId);
     try {
       const book = await this.state.loadBookConfig(input.bookId);
+      if (book.authorityMode === "runtime") throw new Error("Runtime-authority import must use the controlled Runtime migration/import workflow.");
       const bookDir = this.state.bookDir(input.bookId);
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const resolvedLanguage = book.language ?? gp.language;
@@ -3639,7 +3709,9 @@ ${matrix}`,
       contextBudget: contextBudgetFromClient(composerCtx.client),
       compressibleContextCompiler: (request) => composer.compileCompressibleContext(request),
       onContextCompression: this.config.onContextCompression,
-      storyRuntime: this.config.storyRuntime,
+      storyRuntime: book.authorityMode === "runtime" && this.config.storyRuntime
+        ? { ...this.config.storyRuntime, mode: "story-runtime", fallbackOnUnavailable: false }
+        : this.config.storyRuntime,
     });
 
     return { plan, composed };

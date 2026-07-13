@@ -4,7 +4,7 @@
   "title": "ProjectStatusResponse",
   "type": "object",
   "additionalProperties": false,
-  "required": ["project_id", "revision", "phase", "latest_chapter", "projection_health", "schema_version"],
+  "required": ["project_id", "revision", "phase", "latest_chapter", "projection_health", "schema_version", "active_prepare_ids", "authority_mode"],
   "properties": {
     "project_id": {"type": "string"},
     "revision": {"type": "integer", "minimum": 0},
@@ -12,6 +12,7 @@
     "latest_chapter": {"type": "integer", "minimum": 0},
     "projection_health": {"type": "object", "additionalProperties": {"type": "string"}},
     "schema_version": {"type": "string"},
-    "active_prepare_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}}
+    "active_prepare_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}},
+    "authority_mode": {"type": "string", "enum": ["legacy", "runtime"]}
   }
 }

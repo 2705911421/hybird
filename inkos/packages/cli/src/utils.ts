@@ -159,6 +159,7 @@ export function buildPipelineConfig(
     logger,
     onStreamProgress,
     storyRuntime: config.storyRuntime,
+    unifiedReviewEnabled: config.unifiedReview?.enabled ?? true,
   };
 }
 

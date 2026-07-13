@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/review-status-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "chapter_number", "revision", "status", "blocking_finding_ids", "requires_human", "reasons"],
+  "properties": {
+    "project_id": {"type": "string", "minLength": 1}, "chapter_number": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 0},
+    "status": {"enum": ["clear", "blocked", "changes_requested", "rejected", "stale", "unreviewed"]},
+    "blocking_finding_ids": {"type": "array", "items": {"type": "string"}},
+    "requires_human": {"type": "boolean"}, "reasons": {"type": "array", "items": {"type": "string"}}
+  }
+}

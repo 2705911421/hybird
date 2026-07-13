@@ -2673,6 +2673,7 @@ const EditParams = Type.Object({
 
 export function createEditTool(projectRoot: string): AgentTool<typeof EditParams> {
   const booksRoot = join(projectRoot, "books");
+  const state = new StateManager(projectRoot);
 
   return {
     name: "edit",
@@ -2688,6 +2689,10 @@ export function createEditTool(projectRoot: string): AgentTool<typeof EditParams
       params: Static<typeof EditParams>,
     ): Promise<AgentToolResult<undefined>> {
       try {
+        const bookId = params.path.replace(/\\/g, "/").split("/")[0];
+        if (bookId && (await state.loadBookConfig(bookId).catch(() => undefined))?.authorityMode === "runtime") {
+          throw new Error("Generic file editing is disabled for Runtime-authority books.");
+        }
         const filePath = safeBooksPath(booksRoot, params.path);
         const content = await readFile(filePath, "utf-8");
         const idx = content.indexOf(params.old_string);
@@ -2718,6 +2723,7 @@ const WriteFileParams = Type.Object({
 
 export function createWriteFileTool(projectRoot: string): AgentTool<typeof WriteFileParams> {
   const booksRoot = join(projectRoot, "books");
+  const state = new StateManager(projectRoot);
 
   return {
     name: "write",
@@ -2733,6 +2739,10 @@ export function createWriteFileTool(projectRoot: string): AgentTool<typeof Write
       params: Static<typeof WriteFileParams>,
     ): Promise<AgentToolResult<undefined>> {
       try {
+        const bookId = params.path.replace(/\\/g, "/").split("/")[0];
+        if (bookId && (await state.loadBookConfig(bookId).catch(() => undefined))?.authorityMode === "runtime") {
+          throw new Error("Generic file writing is disabled for Runtime-authority books.");
+        }
         const filePath = safeBooksPath(booksRoot, params.path);
         const parentDir = resolve(filePath, "..");
         const { mkdir } = await import("node:fs/promises");

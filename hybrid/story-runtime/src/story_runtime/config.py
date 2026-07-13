@@ -11,6 +11,14 @@ class RuntimeConfig:
     local_token: str = "story-runtime-local"
     busy_timeout_ms: int = 750
     writes_enabled: bool = False
+    projection_root: Path | None = None
+    unified_review_enabled: bool = False
+    observability_enabled: bool = True
+    recovery_enabled: bool = True
+    migration_enabled: bool = True
+    migration_max_file_bytes: int = 64 * 1024 * 1024
+    migration_max_total_bytes: int = 4 * 1024 * 1024 * 1024
+    migration_max_files: int = 200_000
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -19,4 +27,13 @@ class RuntimeConfig:
             local_token=os.getenv("STORY_RUNTIME_TOKEN", "story-runtime-local"),
             busy_timeout_ms=int(os.getenv("STORY_RUNTIME_BUSY_TIMEOUT_MS", "750")),
             writes_enabled=os.getenv("STORY_RUNTIME_ENABLE_WRITES", "0") == "1",
+            projection_root=Path(os.environ["STORY_RUNTIME_PROJECTION_ROOT"]).expanduser().resolve()
+            if os.getenv("STORY_RUNTIME_PROJECTION_ROOT") else None,
+            unified_review_enabled=os.getenv("STORY_RUNTIME_UNIFIED_REVIEW_ENABLED", "0") == "1",
+            observability_enabled=os.getenv("STORY_RUNTIME_OBSERVABILITY_ENABLED", "1") == "1",
+            recovery_enabled=os.getenv("STORY_RUNTIME_RECOVERY_ENABLED", "1") == "1",
+            migration_enabled=os.getenv("STORY_RUNTIME_MIGRATION_ENABLED", "1") == "1",
+            migration_max_file_bytes=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_FILE_BYTES", str(64 * 1024 * 1024))),
+            migration_max_total_bytes=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_TOTAL_BYTES", str(4 * 1024 * 1024 * 1024))),
+            migration_max_files=int(os.getenv("STORY_RUNTIME_MIGRATION_MAX_FILES", "200000")),
         )

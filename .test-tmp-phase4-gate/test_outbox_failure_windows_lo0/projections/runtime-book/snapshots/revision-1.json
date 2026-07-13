@@ -1,0 +1,25 @@
+{
+  "commits": [
+    {
+      "artifact_sha256": "e6111e862c4effa30f493abafaa31542c327abfa407eed536f2aa96f19ce9c3d",
+      "body_sha256": "f5392bde6b9efae57d426ce45eb01403cf963ca3d408275c60829f7a2f9ac071",
+      "chapter_number": 1,
+      "commit_id": "0da05542-6192-535f-b7f6-70049b171395",
+      "finalized_at": "2026-07-12T14:17:21.869685+00:00",
+      "resulting_revision": 1
+    }
+  ],
+  "kind": "non-authoritative-snapshot",
+  "project": {
+    "authority_mode": "runtime",
+    "created_at": "2026-07-12T14:17:21.829404+00:00",
+    "latest_chapter": 1,
+    "phase": "drafting",
+    "project_id": "runtime-book",
+    "revision": 1,
+    "runtime_finalized_at": "2026-07-12T14:17:21.869685+00:00",
+    "schema_version": "story-runtime/v1",
+    "updated_at": "2026-07-12T14:17:21.869685+00:00"
+  },
+  "revision": 1
+}

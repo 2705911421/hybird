@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/review-validation-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "chapter_number", "accepted_artifact_ids", "stale_finding_ids", "blocking_finding_ids", "fingerprints", "status", "replayed"],
+  "properties": {
+    "project_id": {"type": "string"}, "chapter_number": {"type": "integer", "minimum": 1},
+    "accepted_artifact_ids": {"type": "array", "items": {"type": "string"}},
+    "stale_finding_ids": {"type": "array", "items": {"type": "string"}},
+    "blocking_finding_ids": {"type": "array", "items": {"type": "string"}},
+    "fingerprints": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "status": {"$ref": "review-status-response.json"}, "replayed": {"type": "boolean"}
+  }
+}

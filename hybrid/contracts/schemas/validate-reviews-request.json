@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/validate-reviews-request.json",
+  "allOf": [
+    {"$ref": "common-write-context.json"},
+    {
+      "type": "object",
+      "required": ["chapter_number", "body", "artifacts"],
+      "properties": {
+        "chapter_number": {"type": "integer", "minimum": 1},
+        "body": {"type": "string", "maxLength": 2000000},
+        "artifacts": {"type": "array", "minItems": 1, "maxItems": 50, "items": {"$ref": "review-artifacts.json#/$defs/chapterReviewArtifact"}}
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+}

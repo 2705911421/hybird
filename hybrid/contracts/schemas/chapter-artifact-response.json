@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/chapter-artifact-response.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["project_id", "chapter_number", "revision", "commit_id", "title", "body", "summary", "body_sha256", "artifact_sha256", "finalized_at"],
+  "properties": {
+    "project_id": {"type": "string"}, "chapter_number": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 1}, "commit_id": {"type": "string", "format": "uuid"},
+    "title": {"type": "string"}, "body": {"type": "string"}, "summary": {"type": "string"},
+    "body_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "finalized_at": {"type": "string", "format": "date-time"}
+  }
+}

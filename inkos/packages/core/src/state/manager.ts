@@ -400,6 +400,10 @@ export class StateManager {
   }
 
   async saveBookConfig(bookId: string, config: BookConfig): Promise<void> {
+    const existing = await this.loadBookConfig(bookId).catch(() => undefined);
+    if (existing?.authorityMode === "runtime" && config.authorityMode !== "runtime") {
+      throw new Error("Runtime authority cannot be disabled in place; stop writes and restore the cutover snapshot.");
+    }
     await this.saveBookConfigAt(this.bookDir(bookId), config);
   }
 
@@ -534,6 +538,10 @@ export class StateManager {
     index: ReadonlyArray<ChapterMeta>,
     options: { readonly allowEmptyWithChapterFiles?: boolean } = {},
   ): Promise<void> {
+    const book = await this.loadBookConfig(bookId).catch(() => undefined);
+    if (book?.authorityMode === "runtime") {
+      throw new Error("chapters/index.json is not a write target for Runtime-authority books.");
+    }
     await this.saveChapterIndexAt(this.bookDir(bookId), index, options);
   }
 

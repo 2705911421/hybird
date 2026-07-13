@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+from story_runtime.api import create_app
+from story_runtime.config import RuntimeConfig
 
 
 def test_read_only_http_runtime(app, auth_headers):
@@ -40,3 +42,23 @@ def test_write_endpoint_is_feature_flag_closed(app, auth_headers):
         response = client.post("/api/story-runtime/v1/chapters/prepare", headers=auth_headers, json=body)
     assert response.status_code == 403
     assert response.json()["code"] == "WRITE_FEATURE_DISABLED"
+
+
+def test_recovery_and_outbox_routes_require_operator_scope(tmp_path, auth_headers):
+    app = create_app(RuntimeConfig(
+        database_path=tmp_path / "operator-api.db", local_token="test-token", writes_enabled=True,
+    ))
+    with TestClient(app) as client:
+        outbox = client.post("/api/story-runtime/v1/outbox/run", headers=auth_headers, json={
+            "request_id": "2827cc6f-4cbb-451d-8a34-1b849a44cff5", "limit": 10,
+            "retry_failed": True,
+        })
+        recovery = client.post("/api/story-runtime/v1/commits/recover", headers=auth_headers, json={
+            "request_id": "2827cc6f-4cbb-451d-8a34-1b849a44cff5", "project_id": "missing",
+            "commit_id": "2827cc6f-4cbb-451d-8a34-1b849a44cff6",
+            "idempotency_key": "operator-recovery-key-01", "action": "abort", "reason": "test",
+        })
+    assert outbox.status_code == 409
+    assert outbox.json()["code"] == "OPERATOR_SCOPE_REQUIRED"
+    assert recovery.status_code == 409
+    assert recovery.json()["code"] == "OPERATOR_SCOPE_REQUIRED"

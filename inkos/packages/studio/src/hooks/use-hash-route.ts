@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import type { RuntimeView } from "../pages/RuntimePanel";
 
 export type HashRoute =
   | { page: "dashboard" }
@@ -20,6 +21,7 @@ export type HashRoute =
   | { page: "import"; tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation" }
   | { page: "radar" }
   | { page: "doctor" }
+  | { page: "runtime"; view: RuntimeView; bookId?: string; commitId?: string }
   | { page: "play"; projectId: string }
   | { page: "film"; projectId: string }
   | { page: "flow"; projectId: string }
@@ -38,6 +40,11 @@ function parseHash(hash: string): HashRoute {
   const importMatch = path.match(/^import\/(chapters|canon|fanfic|spinoff|imitation)$/);
   if (importMatch) return { page: "import", tab: importMatch[1] as "chapters" | "canon" | "fanfic" | "spinoff" | "imitation" };
   if (path === "book/new") return { page: "book-create" };
+  const runtimeCommitMatch = path.match(/^runtime\/commits\/([^/]+)\/([^/]+)$/);
+  if (runtimeCommitMatch) return { page: "runtime", view: "commit-detail", bookId: decodeURIComponent(runtimeCommitMatch[1]), commitId: decodeURIComponent(runtimeCommitMatch[2]) };
+  const runtimeMatch = path.match(/^runtime\/(overview|commits|events|projections|doctor|reviews|migration|configuration)(?:\/([^/]+))?$/);
+  if (runtimeMatch) return { page: "runtime", view: runtimeMatch[1] as RuntimeView, ...(runtimeMatch[2] ? { bookId: decodeURIComponent(runtimeMatch[2]) } : {}) };
+  if (path === "runtime") return { page: "runtime", view: "overview" };
 
   const serviceMatch = path.match(/^services\/([^/]+)$/);
   if (serviceMatch) return { page: "service-detail", serviceId: decodeURIComponent(serviceMatch[1]) };
@@ -83,13 +90,16 @@ function routeToHash(route: HashRoute): string {
     case "flow": return `#/flow/${encodeURIComponent(route.projectId)}`;
     case "film-author": return `#/film-author/${encodeURIComponent(route.projectId)}`;
     case "film-studio": return `#/studio/film/${encodeURIComponent(route.projectId)}`;
+    case "runtime":
+      if (route.view === "commit-detail" && route.bookId && route.commitId) return `#/runtime/commits/${encodeURIComponent(route.bookId)}/${encodeURIComponent(route.commitId)}`;
+      return `#/runtime/${route.view}${route.bookId ? `/${encodeURIComponent(route.bookId)}` : ""}`;
     default: return "";
   }
 }
 
 export { parseHash, routeToHash }; // for testing
 
-const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "project-settings", "service-detail", "translation", "import", "play", "film", "flow", "film-author", "film-studio"]);
+const HASH_PAGES = new Set(["dashboard", "chat", "book", "book-settings", "book-create", "services", "project-settings", "service-detail", "translation", "import", "play", "film", "flow", "film-author", "film-studio", "runtime"]);
 
 export function useHashRoute() {
   const [route, setRouteState] = useState<HashRoute>(() => parseHash(window.location.hash));

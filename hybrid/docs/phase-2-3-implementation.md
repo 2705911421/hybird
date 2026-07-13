@@ -10,7 +10,7 @@ InkOS now reads Story Runtime only through the versioned HTTP/JSON contract. Cha
 {
   "storyRuntime": {
     "mode": "shadow",
-    "baseUrl": "http://127.0.0.1:8765",
+    "baseUrl": "http://127.0.0.1:47831",
     "timeoutMs": 3000,
     "maxContextTokens": 16000,
     "maxItems": 100,

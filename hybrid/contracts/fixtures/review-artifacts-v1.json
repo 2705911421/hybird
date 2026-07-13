@@ -1,0 +1,36 @@
+{
+  "body": "甲😀乙",
+  "chapter_review": {
+    "artifact_id": "review-fixture", "schema_version": "review-artifacts/v1", "project_id": "fixture-project",
+    "chapter_number": 1, "source_revision": 0, "body_sha256": "bed1236d07024f3a56de39f278f5b39def0d5f4ec2c61356e78a3eec36105389",
+    "reviewer_kind": "runtime_validator", "reviewer_version": "1", "generated_at": "2026-07-12T00:00:00Z",
+    "dimensions": {"continuity": 100}, "findings": [], "summary": "clear", "recommended_action": "approve",
+    "model_metadata": {}, "prompt_template_version": "deterministic/v1"
+  },
+  "state_proposal": {
+    "proposal_id": "proposal-fixture", "schema_version": "review-artifacts/v1", "project_id": "fixture-project",
+    "chapter_number": 1, "source_revision": 0, "body_sha256": "bed1236d07024f3a56de39f278f5b39def0d5f4ec2c61356e78a3eec36105389",
+    "entity_mutations": [], "relationship_mutations": [], "fact_mutations": [], "timeline_events": [],
+    "narrative_thread_mutations": [], "foreshadowing_mutations": [], "evidence": [], "confidence": 1,
+    "extraction_source": "observer"
+  },
+  "revision_plan": {
+    "plan_id": "plan-fixture", "schema_version": "review-artifacts/v1", "project_id": "fixture-project",
+    "chapter_number": 1, "source_revision": 0, "body_sha256": "bed1236d07024f3a56de39f278f5b39def0d5f4ec2c61356e78a3eec36105389",
+    "finding_ids": [], "allowed_scopes": [], "forbidden_hard_facts": [], "locked_text": [], "target_outcomes": [],
+    "requires_reaudit": true
+  },
+  "revision_result": {
+    "result_id": "result-fixture", "schema_version": "review-artifacts/v1", "project_id": "fixture-project",
+    "chapter_number": 1, "source_revision": 0,
+    "original_body_sha256": "bed1236d07024f3a56de39f278f5b39def0d5f4ec2c61356e78a3eec36105389",
+    "revised_body_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "resolved_finding_ids": [], "unresolved_finding_ids": [], "newly_introduced_risks": [], "changed_spans": [],
+    "revision_rationale": "fixture"
+  },
+  "human_decision": {
+    "decision_id": "decision-fixture", "schema_version": "review-artifacts/v1", "project_id": "fixture-project",
+    "chapter_number": 1, "reviewer": "fixture", "decision": "approve", "finding_decisions": {}, "comment": "ok",
+    "timestamp": "2026-07-12T00:00:00Z", "source_revision": 0
+  }
+}

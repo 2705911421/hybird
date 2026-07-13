@@ -26,6 +26,20 @@ interface ChapterData {
   readonly content: string;
 }
 
+interface ReviewFindingData {
+  readonly finding_id: string; readonly category: string; readonly severity: "info" | "minor" | "major" | "critical";
+  readonly blocking: boolean; readonly message: string; readonly rationale: string; readonly status: string;
+  readonly source: "runtime_validator" | "llm_reviewer" | "human" | "legacy_adapter";
+  readonly affected_entities: ReadonlyArray<string>; readonly affected_facts: ReadonlyArray<string>;
+  readonly evidence_spans: ReadonlyArray<{ readonly start_offset: number; readonly end_offset: number; readonly locator: string; readonly explanation: string; readonly status: string }>;
+}
+
+interface RuntimeReviewData {
+  readonly status: { readonly revision: number; readonly status: string; readonly reasons: ReadonlyArray<string> };
+  readonly view: { readonly findings: ReadonlyArray<ReviewFindingData>; readonly deterministicFindings: ReadonlyArray<ReviewFindingData>; readonly literarySuggestions: ReadonlyArray<ReviewFindingData>; readonly hasStaleEvidence: boolean; readonly blocked: boolean; readonly blockingReasons: ReadonlyArray<string> };
+  readonly revisionDiff?: { readonly original_body: string; readonly revised_body: string; readonly changed_spans: ReadonlyArray<{ readonly start_offset: number; readonly end_offset: number }> };
+}
+
 interface Nav {
   toBook: (id: string) => void;
   toDashboard: () => void;
@@ -42,9 +56,11 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
   const { data, loading, error, refetch } = useApi<ChapterData>(
     `/books/${bookId}/chapters/${chapterNumber}`,
   );
+  const { data: runtimeReview, refetch: refetchReview } = useApi<RuntimeReviewData>(`/books/${bookId}/chapters/${chapterNumber}/reviews`);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<string>("all");
 
   const handleStartEdit = () => {
     if (!data) return;
@@ -95,6 +111,10 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
 
   const handleApprove = async () => {
     try {
+      if (runtimeReview) {
+        await submitRuntimeDecision("approve", {}, "Approved in Studio.");
+        return;
+      }
       await postApi(`/books/${bookId}/chapters/${chapterNumber}/approve`);
       nav.toBook(bookId);
     } catch (e) {
@@ -104,6 +124,10 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
 
   const handleReject = async () => {
     try {
+      if (runtimeReview) {
+        await submitRuntimeDecision("reject", {}, "Rejected in Studio.");
+        return;
+      }
       await postApi(`/books/${bookId}/chapters/${chapterNumber}/reject`);
       nav.toBook(bookId);
     } catch (e) {
@@ -111,7 +135,21 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
     }
   };
 
+  const submitRuntimeDecision = async (
+    decision: "approve" | "reject" | "request_changes",
+    findingDecisions: Record<string, "accept" | "reject" | "request_changes">,
+    comment: string,
+  ) => {
+    const decisionId = crypto.randomUUID();
+    await fetchJson(`/books/${bookId}/chapters/${chapterNumber}/review-decisions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decisionId, idempotencyKey: `studio-${decisionId}`, reviewer: "studio-user", decision, findingDecisions, comment }),
+    });
+    await refetchReview();
+  };
+
   const paragraphs = body.split(/\n\n+/).filter(Boolean);
+  const visibleFindings = runtimeReview?.view.findings.filter((finding) => severityFilter === "all" || finding.severity === severityFilter) ?? [];
 
   return (
     <div className="max-w-4xl mx-auto space-y-10 fade-in">
@@ -166,7 +204,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
                 {t("reader.preview")}
               </button>
             </>
-          ) : (
+          ) : !runtimeReview ? (
             <button
               onClick={handleStartEdit}
               className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-muted-foreground rounded-xl hover:text-primary hover:bg-primary/10 transition-all border border-border/50"
@@ -174,7 +212,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
               <Pencil size={14} />
               {t("reader.edit")}
             </button>
-          )}
+          ) : null}
 
           <button
             onClick={handleApprove}
@@ -193,8 +231,69 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
         </div>
       </div>
 
+      {runtimeReview && (
+        <section className="rounded-2xl border border-border bg-card p-6 space-y-6" aria-label="Runtime chapter review">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">Runtime review · {runtimeReview.status.status}</h2>
+              <p className="text-xs text-muted-foreground">Deterministic errors: {runtimeReview.view.deterministicFindings.length} · Literary suggestions: {runtimeReview.view.literarySuggestions.length}</p>
+            </div>
+            <div className="flex gap-2">
+              <select value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="rounded-lg border border-border bg-background px-3 py-2 text-xs">
+                {['all', 'critical', 'major', 'minor', 'info'].map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <button
+                onClick={() => void submitRuntimeDecision("approve", Object.fromEntries(runtimeReview.view.findings.filter((finding) => !finding.blocking).map((finding) => [finding.finding_id, "accept"])), "Bulk-approved non-blocking findings in Studio.")}
+                className="rounded-lg border border-emerald-500/30 px-3 py-2 text-xs text-emerald-600"
+              >Approve non-blocking</button>
+              <button onClick={() => void submitRuntimeDecision("request_changes", {}, "Revision requested in Studio.")} className="rounded-lg border border-amber-500/30 px-3 py-2 text-xs text-amber-600">Request revision</button>
+            </div>
+          </div>
+
+          {(runtimeReview.status.reasons.length > 0 || runtimeReview.view.hasStaleEvidence) && (
+            <div className="rounded-xl bg-destructive/5 border border-destructive/20 p-4 text-sm text-destructive">
+              {runtimeReview.view.hasStaleEvidence && <div>Evidence is stale; re-audit is required.</div>}
+              {runtimeReview.status.reasons.map((reason) => <div key={reason}>{reason}</div>)}
+            </div>
+          )}
+
+          <div className="grid gap-4">
+            {visibleFindings.map((finding) => (
+              <article key={finding.finding_id} className={`rounded-xl border p-4 ${finding.source === 'runtime_validator' ? 'border-destructive/30' : 'border-primary/20'}`}>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                  <span>{finding.source === 'runtime_validator' ? 'Runtime validator' : 'LLM reviewer'}</span>
+                  <span className="rounded bg-secondary px-2 py-0.5">{finding.severity}</span>
+                  {finding.blocking && <span className="rounded bg-destructive/10 px-2 py-0.5 text-destructive">blocking</span>}
+                  <span className="text-muted-foreground">{finding.status}</span>
+                </div>
+                <h3 className="mt-2 font-semibold">{finding.message}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">{finding.rationale}</p>
+                {(finding.affected_entities.length > 0 || finding.affected_facts.length > 0) && <p className="mt-2 text-xs text-muted-foreground">Entities: {finding.affected_entities.join(', ') || 'none'} · Facts: {finding.affected_facts.join(', ') || 'none'}</p>}
+                {finding.evidence_spans.map((span) => (
+                  <button key={`${span.start_offset}-${span.end_offset}`} onClick={() => document.getElementById('chapter-manuscript')?.scrollIntoView({ behavior: 'smooth' })} className="mt-2 block text-left text-xs text-primary underline">
+                    {span.locator} · offsets {span.start_offset}-{span.end_offset} · {span.status}: {span.explanation}
+                  </button>
+                ))}
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => void submitRuntimeDecision("approve", { [finding.finding_id]: "accept" }, `Accepted ${finding.finding_id}.`)} className="text-xs text-emerald-600">Approve</button>
+                  <button onClick={() => void submitRuntimeDecision("reject", { [finding.finding_id]: "reject" }, `Rejected ${finding.finding_id}.`)} className="text-xs text-destructive">Reject</button>
+                  <button onClick={() => void submitRuntimeDecision("request_changes", { [finding.finding_id]: "request_changes" }, `Revision requested for ${finding.finding_id}.`)} className="text-xs text-amber-600">Request revision</button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {runtimeReview.revisionDiff && (
+            <div className="grid md:grid-cols-2 gap-4">
+              <div><h3 className="text-sm font-bold mb-2">Before revision</h3><pre className="whitespace-pre-wrap rounded-xl bg-secondary/40 p-4 text-xs">{runtimeReview.revisionDiff.original_body}</pre></div>
+              <div><h3 className="text-sm font-bold mb-2">After revision</h3><pre className="whitespace-pre-wrap rounded-xl bg-secondary/40 p-4 text-xs">{runtimeReview.revisionDiff.revised_body}</pre></div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Manuscript Sheet */}
-      <div className="paper-sheet rounded-2xl p-8 md:p-16 lg:p-24 shadow-2xl shadow-primary/5 min-h-[80vh] relative overflow-hidden">
+      <div id="chapter-manuscript" className="paper-sheet rounded-2xl p-8 md:p-16 lg:p-24 shadow-2xl shadow-primary/5 min-h-[80vh] relative overflow-hidden">
         {/* Physical Paper Details */}
         <div className="absolute top-0 left-8 w-px h-full bg-primary/5 hidden md:block" />
         <div className="absolute top-0 right-8 w-px h-full bg-primary/5 hidden md:block" />

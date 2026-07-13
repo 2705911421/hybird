@@ -11,7 +11,9 @@
         "projection_names": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
         "from_event_sequence": {"type": "integer", "minimum": 0},
         "to_event_sequence": {"type": ["integer", "null"], "minimum": 0},
-        "verify_only": {"type": "boolean"}
+        "verify_only": {"type": "boolean"},
+        "target_revision": {"type": ["integer", "null"], "minimum": 0},
+        "expected_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}
       }
     }
   ],

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "commit-recovery-response.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "project_id", "commit_id", "state", "resulting_revision", "repair_action", "replayed"],
+  "properties": {
+    "request_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string" },
+    "commit_id": { "type": "string", "format": "uuid" },
+    "state": { "type": "string" },
+    "resulting_revision": { "type": ["integer", "null"], "minimum": 0 },
+    "repair_action": { "type": "string" },
+    "replayed": { "type": "boolean" }
+  }
+}

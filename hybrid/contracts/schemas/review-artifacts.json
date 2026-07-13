@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hybrid.local/schemas/review-artifacts.json",
+  "title": "Hybrid review artifacts v1",
+  "oneOf": [
+    { "$ref": "#/$defs/chapterReviewArtifact" },
+    { "$ref": "#/$defs/stateMutationProposal" },
+    { "$ref": "#/$defs/revisionPlan" },
+    { "$ref": "#/$defs/revisionResult" },
+    { "$ref": "#/$defs/humanReviewDecision" }
+  ],
+  "$defs": {
+    "evidenceSpan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact", "start_offset", "end_offset", "quoted_hash", "locator", "explanation", "status"],
+      "properties": {
+        "artifact": { "type": "string", "enum": ["chapter_body"] },
+        "start_offset": { "type": "integer", "minimum": 0 },
+        "end_offset": { "type": "integer", "minimum": 1 },
+        "quoted_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "locator": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "explanation": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["current", "stale", "remapped"], "default": "current" }
+      }
+    },
+    "reviewFinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["finding_id", "category", "severity", "blocking", "message", "rationale", "evidence_spans", "affected_entities", "affected_facts", "proposed_resolution", "confidence", "source", "deterministic_rule_id", "supersedes", "status"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "severity": { "type": "string", "enum": ["info", "minor", "major", "critical"] },
+        "blocking": { "type": "boolean" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "rationale": { "type": "string", "maxLength": 8000 },
+        "evidence_spans": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/evidenceSpan" } },
+        "affected_entities": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 128 } },
+        "affected_facts": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 256 } },
+        "proposed_resolution": { "type": ["string", "null"], "maxLength": 8000 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "type": "string", "enum": ["runtime_validator", "llm_reviewer", "human", "legacy_adapter"] },
+        "deterministic_rule_id": { "type": ["string", "null"], "maxLength": 128 },
+        "supersedes": { "type": "array", "maxItems": 100, "items": { "type": "string", "maxLength": 128 } },
+        "status": { "type": "string", "enum": ["open", "accepted", "rejected", "resolved", "superseded", "stale"] }
+      }
+    },
+    "chapterReviewArtifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "schema_version", "project_id", "chapter_number", "source_revision", "body_sha256", "reviewer_kind", "reviewer_version", "generated_at", "dimensions", "findings", "summary", "recommended_action", "model_metadata", "prompt_template_version"],
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "schema_version": { "const": "review-artifacts/v1" },
+        "project_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "chapter_number": { "type": "integer", "minimum": 1 },
+        "source_revision": { "type": "integer", "minimum": 0 },
+        "body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "reviewer_kind": { "type": "string", "enum": ["auditor", "continuity_auditor", "state_validator", "reviewer", "runtime_validator", "human", "legacy_adapter"] },
+        "reviewer_version": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "generated_at": { "type": "string", "format": "date-time" },
+        "dimensions": { "type": "object", "maxProperties": 100, "additionalProperties": { "type": "number", "minimum": 0, "maximum": 100 } },
+        "findings": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/reviewFinding" } },
+        "summary": { "type": "string", "maxLength": 16000 },
+        "recommended_action": { "type": "string", "enum": ["approve", "revise", "human_review", "reject"] },
+        "model_metadata": { "type": "object", "maxProperties": 20, "additionalProperties": { "type": ["string", "number", "boolean", "null"] } },
+        "prompt_template_version": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "stateMutationProposal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proposal_id", "schema_version", "project_id", "chapter_number", "source_revision", "body_sha256", "entity_mutations", "relationship_mutations", "fact_mutations", "timeline_events", "narrative_thread_mutations", "foreshadowing_mutations", "evidence", "confidence", "extraction_source"],
+      "properties": {
+        "proposal_id": { "type": "string", "minLength": 1 }, "schema_version": { "const": "review-artifacts/v1" },
+        "project_id": { "type": "string", "minLength": 1 }, "chapter_number": { "type": "integer", "minimum": 1 }, "source_revision": { "type": "integer", "minimum": 0 }, "body_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "entity_mutations": { "$ref": "#/$defs/mutations" }, "relationship_mutations": { "$ref": "#/$defs/mutations" }, "fact_mutations": { "$ref": "#/$defs/mutations" }, "timeline_events": { "$ref": "#/$defs/mutations" }, "narrative_thread_mutations": { "$ref": "#/$defs/mutations" }, "foreshadowing_mutations": { "$ref": "#/$defs/mutations" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidenceSpan" } }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "extraction_source": { "type": "string", "enum": ["observer", "reflector", "chapter_analyzer", "legacy_adapter"] }
+      }
+    },
+    "mutations": { "type": "array", "maxItems": 1000, "items": { "type": "object", "required": ["operation", "target_id", "value"], "properties": { "operation": { "enum": ["create", "update", "delete", "resolve", "reopen"] }, "target_id": { "type": "string" }, "value": { "type": "object" } }, "additionalProperties": false } },
+    "revisionPlan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["plan_id", "schema_version", "project_id", "chapter_number", "source_revision", "body_sha256", "finding_ids", "allowed_scopes", "forbidden_hard_facts", "locked_text", "target_outcomes", "requires_reaudit"],
+      "properties": { "plan_id": {"type":"string"}, "schema_version":{"const":"review-artifacts/v1"}, "project_id":{"type":"string"}, "chapter_number":{"type":"integer","minimum":1}, "source_revision":{"type":"integer","minimum":0}, "body_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}, "finding_ids":{"type":"array","items":{"type":"string"}}, "allowed_scopes":{"type":"array","items":{"type":"string"}}, "forbidden_hard_facts":{"type":"array","items":{"type":"string"}}, "locked_text":{"type":"array","items":{"$ref":"#/$defs/evidenceSpan"}}, "target_outcomes":{"type":"array","items":{"type":"string"}}, "requires_reaudit":{"type":"boolean"} }
+    },
+    "revisionResult": {
+      "type":"object", "additionalProperties":false,
+      "required":["result_id","schema_version","project_id","chapter_number","source_revision","original_body_sha256","revised_body_sha256","resolved_finding_ids","unresolved_finding_ids","newly_introduced_risks","changed_spans","revision_rationale"],
+      "properties":{"result_id":{"type":"string"},"schema_version":{"const":"review-artifacts/v1"},"project_id":{"type":"string"},"chapter_number":{"type":"integer","minimum":1},"source_revision":{"type":"integer","minimum":0},"original_body_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"revised_body_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"resolved_finding_ids":{"type":"array","items":{"type":"string"}},"unresolved_finding_ids":{"type":"array","items":{"type":"string"}},"newly_introduced_risks":{"type":"array","items":{"type":"string"}},"changed_spans":{"type":"array","items":{"type":"object","required":["start_offset","end_offset","replacement_hash"],"properties":{"start_offset":{"type":"integer","minimum":0},"end_offset":{"type":"integer","minimum":0},"replacement_hash":{"type":"string","pattern":"^[0-9a-f]{64}$"}},"additionalProperties":false}},"revision_rationale":{"type":"string","maxLength":16000}}
+    },
+    "humanReviewDecision": {
+      "type":"object", "additionalProperties":false,
+      "required":["decision_id","schema_version","project_id","chapter_number","reviewer","decision","finding_decisions","comment","timestamp","source_revision"],
+      "properties":{"decision_id":{"type":"string"},"schema_version":{"const":"review-artifacts/v1"},"project_id":{"type":"string"},"chapter_number":{"type":"integer","minimum":1},"reviewer":{"type":"string"},"decision":{"enum":["approve","reject","request_changes"]},"finding_decisions":{"type":"object","additionalProperties":{"enum":["accept","reject","request_changes"]}},"comment":{"type":"string","maxLength":16000},"timestamp":{"type":"string","format":"date-time"},"source_revision":{"type":"integer","minimum":0}}
+    }
+  }
+}
