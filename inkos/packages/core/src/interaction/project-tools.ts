@@ -1,5 +1,5 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import type {
   InteractionEvent,
   Logger,
@@ -10,59 +10,11 @@ import type {
   BookConfig,
 } from "../index.js";
 import { chatCompletion } from "../index.js";
-import { executeEditTransaction } from "./edit-controller.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import type { InteractionRuntimeTools } from "./runtime.js";
 import { writeExportArtifact } from "./export-artifact.js";
-import { safeChildPath } from "../utils/path-safety.js";
 import { deriveBookIdFromTitle } from "../utils/book-id.js";
 import { normalizePlatformOrOther } from "../models/book.js";
-
-const SAFE_TRUTH_FLAT_FILE_NAMES = new Set([
-  "author_intent.md",
-  "current_focus.md",
-  "story_bible.md",
-  "volume_outline.md",
-  "book_rules.md",
-  "particle_ledger.md",
-  "subplot_board.md",
-  "emotional_arcs.md",
-  "style_guide.md",
-  "parent_canon.md",
-  "fanfic_canon.md",
-  "character_matrix.md",
-  "current_state.md",
-  "pending_hooks.md",
-  "chapter_summaries.md",
-]);
-
-const SAFE_TRUTH_OUTLINE_FILE_NAMES = new Set([
-  "outline/story_frame.md",
-  "outline/volume_map.md",
-  "outline/节奏原则.md",
-  "outline/rhythm_principles.md",
-]);
-
-const SAFE_ROLE_TRUTH_FILE_RE = /^roles\/(主要角色|次要角色|major|minor)\/[^/\\]+\.md$/u;
-
-export function assertSafeTruthFileName(fileName: string): string {
-  const trimmed = fileName.trim();
-  const withExtension = trimmed.endsWith(".md") ? trimmed : `${trimmed}.md`;
-  const lower = withExtension.toLowerCase();
-  if (
-    !trimmed ||
-    withExtension.startsWith("/") ||
-    withExtension.includes("\\") ||
-    withExtension.includes("\0") ||
-    withExtension.includes("..")
-  ) {
-    throw new Error(`Invalid truth file name: ${JSON.stringify(fileName)}`);
-  }
-  if (SAFE_TRUTH_FLAT_FILE_NAMES.has(lower)) return lower;
-  if (SAFE_TRUTH_OUTLINE_FILE_NAMES.has(lower)) return lower;
-  if (SAFE_ROLE_TRUTH_FILE_RE.test(withExtension)) return withExtension;
-  throw new Error(`Invalid truth file name: ${JSON.stringify(fileName)}`);
-}
 
 type PipelineLike = Pick<PipelineRunner, "writeNextChapter" | "reviseDraft"> & {
   readonly initBook?: (
@@ -134,24 +86,8 @@ function buildCreationExternalContext(input: {
   return sections.join("\n\n");
 }
 
-async function withBookMutationLock<T>(
-  state: StateLike,
-  bookId: string,
-  task: () => Promise<T>,
-): Promise<T> {
-  const releaseLock = await state.acquireBookLock(bookId);
-  try {
-    return await task();
-  } finally {
-    await releaseLock();
-  }
-}
-
-async function assertLegacyAuthority(state: StateLike, bookId: string, operation: string): Promise<void> {
-  const book = await state.loadBookConfig(bookId);
-  if (book.authorityMode === "runtime") {
-    throw new Error(`${operation} cannot write files for Runtime-authority book "${bookId}"; use the Story Runtime commit workflow.`);
-  }
+function denyLongFormMutation(operation: string): never {
+  throw new Error(`LEGACY_LONG_FORM_READ_ONLY: ${operation} was removed; submit a typed proposal or Runtime command.`);
 }
 
 export function buildChapterFileLookup(files: ReadonlyArray<string>): ReadonlyMap<number, string> {
@@ -461,92 +397,11 @@ export function createInteractionToolsFromDeps(
       bookId,
       () => pipeline.reviseDraft(bookId, chapterNumber, mode as ReviseMode),
     ),
-    patchChapterText: async (bookId, chapterNumber, targetText, replacementText) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "patchChapterText");
-      const execution = await executeEditTransaction(
-        {
-          bookDir: (targetBookId) => state.bookDir(targetBookId),
-          loadChapterIndex: (targetBookId) => state.loadChapterIndex(targetBookId),
-          saveChapterIndex: (targetBookId, index) => state.saveChapterIndex(targetBookId, index),
-        },
-        {
-          kind: "chapter-local-edit",
-          bookId,
-          chapterNumber,
-          instruction: `Replace ${targetText} with ${replacementText}`,
-          targetText,
-          replacementText,
-        },
-      );
-      return {
-        __interaction: {
-          activeChapterNumber: chapterNumber,
-          responseText: execution.summary,
-        },
-      };
-    }),
-    replaceChapterText: async (bookId, chapterNumber, fullText) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "replaceChapterText");
-      const execution = await executeEditTransaction(
-        {
-          bookDir: (targetBookId) => state.bookDir(targetBookId),
-          loadChapterIndex: (targetBookId) => state.loadChapterIndex(targetBookId),
-          saveChapterIndex: (targetBookId, index) => state.saveChapterIndex(targetBookId, index),
-        },
-        {
-          kind: "chapter-replace",
-          bookId,
-          chapterNumber,
-          fullText,
-        },
-      );
-      return {
-        __interaction: {
-          activeChapterNumber: chapterNumber,
-          responseText: execution.summary,
-        },
-      };
-    }),
-    renameEntity: async (bookId, oldValue, newValue) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "renameEntity");
-      const execution = await executeEditTransaction(
-        {
-          bookDir: (targetBookId) => state.bookDir(targetBookId),
-          loadChapterIndex: (targetBookId) => state.loadChapterIndex(targetBookId),
-          saveChapterIndex: (targetBookId, index) => state.saveChapterIndex(targetBookId, index),
-        },
-        {
-          kind: "entity-rename",
-          bookId,
-          entityType: "character",
-          oldValue,
-          newValue,
-        },
-      );
-      return {
-        __interaction: {
-          responseText: execution.summary,
-        },
-      };
-    }),
-    updateCurrentFocus: async (bookId, content) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "updateCurrentFocus");
-      await state.ensureControlDocuments(bookId);
-      await writeFile(join(state.bookDir(bookId), "story", "current_focus.md"), content, "utf-8");
-    }),
-    updateAuthorIntent: async (bookId, content) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "updateAuthorIntent");
-      await state.ensureControlDocuments(bookId);
-      await writeFile(join(state.bookDir(bookId), "story", "author_intent.md"), content, "utf-8");
-    }),
-    writeTruthFile: async (bookId, fileName, content) => withBookMutationLock(state, bookId, async () => {
-      await assertLegacyAuthority(state, bookId, "writeTruthFile");
-      await state.ensureControlDocuments(bookId);
-      const storyDir = join(state.bookDir(bookId), "story");
-      const safeFileName = assertSafeTruthFileName(fileName);
-      const targetPath = safeChildPath(storyDir, safeFileName);
-      await mkdir(dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, content, "utf-8");
-    }),
+    patchChapterText: async () => denyLongFormMutation("patchChapterText"),
+    replaceChapterText: async () => denyLongFormMutation("replaceChapterText"),
+    renameEntity: async () => denyLongFormMutation("renameEntity"),
+    updateCurrentFocus: async () => denyLongFormMutation("updateCurrentFocus"),
+    updateAuthorIntent: async () => denyLongFormMutation("updateAuthorIntent"),
+    writeTruthFile: async () => denyLongFormMutation("writeTruthFile"),
   };
 }

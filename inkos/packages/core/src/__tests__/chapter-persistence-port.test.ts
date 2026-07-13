@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import type { WriteChapterOutput } from "../agents/writer.js";
-import { LegacyChapterPersistence, RuntimeValidationBlockedError, StoryRuntimeChapterPersistence, buildRuntimeArtifacts } from "../pipeline/chapter-persistence-port.js";
+import { RuntimeValidationBlockedError, StoryRuntimeChapterPersistence, buildRuntimeArtifacts } from "../pipeline/chapter-persistence-port.js";
 import { StoryRuntimeClientError } from "../story-runtime/client.js";
 
 function output(): WriteChapterOutput {
@@ -23,17 +23,10 @@ function output(): WriteChapterOutput {
 }
 
 function input() {
-  const legacy = {
-    loadChapterIndex: vi.fn(async () => []), saveChapter: vi.fn(async () => undefined),
-    saveTruthFiles: vi.fn(async () => undefined), saveChapterIndex: vi.fn(async () => undefined),
-    markBookActiveIfNeeded: vi.fn(async () => undefined), persistAuditDriftGuidance: vi.fn(async () => undefined),
-    snapshotState: vi.fn(async () => undefined), syncCurrentStateFactHistory: vi.fn(async () => undefined),
-    logSnapshotStage: vi.fn(),
-  };
   return {
     projectId: "runtime-book", output: output(), status: "ready-for-review" as const,
     auditResult: { passed: true, issues: [], summary: "passed" }, finalWordCount: 8,
-    lengthWarnings: [], degradedIssues: [], intent: { goal: "find key" }, legacy,
+    lengthWarnings: [], degradedIssues: [], intent: { goal: "find key" },
   };
 }
 
@@ -48,15 +41,7 @@ function runtimeClient(): any {
 }
 
 describe("ChapterPersistencePort", () => {
-  it("keeps the legacy callback chain for legacy books", async () => {
-    const request = input();
-    const result = await new LegacyChapterPersistence().persist(request);
-    expect(result.authority).toBe("legacy");
-    expect(request.legacy.saveChapter).toHaveBeenCalledOnce();
-    expect(request.legacy.saveTruthFiles).toHaveBeenCalledOnce();
-  });
-
-  it("commits Runtime authority without any legacy file callback", async () => {
+  it("commits only through Runtime authority", async () => {
     const request = input();
     const client = runtimeClient();
     const result = await new StoryRuntimeChapterPersistence(client as never).persist(request);
@@ -65,7 +50,6 @@ describe("ChapterPersistencePort", () => {
     expect(client.validateReviews).toHaveBeenCalledOnce();
     expect(client.validateChapter).toHaveBeenCalledOnce();
     expect(client.commitChapter).toHaveBeenCalledOnce();
-    for (const callback of Object.values(request.legacy)) expect(callback).not.toHaveBeenCalled();
   });
 
   it("does not commit blocking validation", async () => {
@@ -82,7 +66,6 @@ describe("ChapterPersistencePort", () => {
     expect(result.authority).toBe("runtime");
     expect(client.validateReviews).not.toHaveBeenCalled();
     expect(client.commitChapter).toHaveBeenCalledOnce();
-    for (const callback of Object.values(request.legacy)) expect(callback).not.toHaveBeenCalled();
   });
 
   it("retries a lost commit response with the same idempotent input", async () => {

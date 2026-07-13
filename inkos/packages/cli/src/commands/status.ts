@@ -12,17 +12,17 @@ export const statusCommand = new Command("status")
       const root = findProjectRoot();
       const state = new StateManager(root);
       const config = await loadConfig({ requireApiKey: false, projectRoot: root });
-      const runtimeClient = config.storyRuntime.mode === "legacy" ? undefined : new StoryRuntimeClient({
+      const runtimeClient = config.storyRuntime.mode === "story-runtime" ? new StoryRuntimeClient({
         baseUrl: config.storyRuntime.baseUrl,
         timeoutMs: config.storyRuntime.timeoutMs,
         apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
-      });
+      }) : undefined;
       const runtimeHealth = runtimeClient
         ? await runtimeClient.health().then(
             (health) => ({ configuredMode: config.storyRuntime.mode, reachable: true, ...health }),
             (error) => ({ configuredMode: config.storyRuntime.mode, reachable: false, error: String(error) }),
           )
-        : { configuredMode: "legacy" as const, reachable: false, disabled: true };
+        : { configuredMode: config.storyRuntime.mode, reachable: false, disabled: true, readOnly: true };
 
       const allBookIds = await state.listBooks();
       const bookIds = bookIdArg ? [bookIdArg] : allBookIds;

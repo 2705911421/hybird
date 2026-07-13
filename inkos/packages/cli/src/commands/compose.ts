@@ -38,7 +38,6 @@ composeCommand
         log(`  Context: ${result.contextPath}`);
         log(`  Rule stack: ${result.ruleStackPath}`);
         log(`  Trace: ${result.tracePath}`);
-        if (result.shadowDiffPath) log(`  Shadow diff: ${result.shadowDiffPath}`);
         if (result.conflicts.length > 0) {
           log(`  Conflicts: ${result.conflicts.length}`);
           for (const conflict of result.conflicts) log(`    ! ${conflict}`);

@@ -138,7 +138,7 @@ describe("Issue 1 — Studio: old book (no outline/story_frame.md)", () => {
     expect(body.legacy).toBeUndefined();
   }, 10_000);
 
-  it("PUT story_bible.md succeeds", async () => {
+  it("PUT story_bible.md is read-only until migration", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -147,9 +147,9 @@ describe("Issue 1 — Studio: old book (no outline/story_frame.md)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "# Updated Bible" }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(410);
     const saved = await readFile(join(storyDir, "story_bible.md"), "utf-8");
-    expect(saved).toBe("# Updated Bible");
+    expect(saved).toContain("Authoritative content");
   });
 
   it("list endpoint shows story_bible.md without legacy tag", async () => {
@@ -199,7 +199,7 @@ describe("Issue 1 — Studio: new book (has outline/story_frame.md)", () => {
     expect(body.legacy).toBe(true);
   });
 
-  it("PUT story_bible.md returns 400", async () => {
+  it("PUT story_bible.md returns 410", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -208,9 +208,9 @@ describe("Issue 1 — Studio: new book (has outline/story_frame.md)", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "# Attempt" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(410);
     const body = await res.json() as { error: string };
-    expect(body.error).toMatch(/Legacy compat shim/);
+    expect(body.error).toBe("TRUTH_PUT_REMOVED");
   });
 
   it("list endpoint shows story_bible.md with legacy tag", async () => {

@@ -571,7 +571,6 @@ describe("runAgentSession cache — bookId switch", () => {
       "research_web",
       "ingest_material",
       "retrieve_material",
-      "import_chapters",
     ]);
   });
 
@@ -888,14 +887,10 @@ describe("runAgentSession cache — bookId switch", () => {
       "sub_agent",
       "generate_cover",
       "read",
-      "write_truth_file",
-      "rename_entity",
-      "patch_chapter_text",
-      "replace_chapter_text",
+      "propose_action",
       "research_web",
       "ingest_material",
       "retrieve_material",
-      "import_chapters",
       "grep",
       "ls",
     ]);
@@ -912,10 +907,7 @@ describe("runAgentSession cache — bookId switch", () => {
 
     expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
       "read",
-      "write_truth_file",
-      "rename_entity",
-      "patch_chapter_text",
-      "replace_chapter_text",
+      "propose_action",
       "ingest_material",
       "retrieve_material",
       "grep",

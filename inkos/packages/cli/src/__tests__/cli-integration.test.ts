@@ -103,7 +103,7 @@ describe("CLI integration", () => {
       expect(config.llm.model).toBeDefined();
       expect(config.daemon).toBeDefined();
       expect(config.notify).toEqual([]);
-      expect(config.storyRuntime).toMatchObject({ mode: "legacy", fallbackOnUnavailable: true });
+      expect(config.storyRuntime).toMatchObject({ mode: "story-runtime", fallbackOnUnavailable: false });
     });
 
     it("creates .env file", async () => {
@@ -198,16 +198,17 @@ describe("CLI integration", () => {
       expect(config.inputGovernanceMode).toBe("v2");
     });
 
-    it("sets Story Runtime feature mode", async () => {
+    it("rejects retired Story Runtime modes", async () => {
       try {
         await stat(join(projectDir, "inkos.json"));
       } catch {
         run(["init"]);
       }
-      run(["config", "set", "storyRuntime.mode", "shadow"]);
+      const { stderr, exitCode } = runStderr(["config", "set", "storyRuntime.mode", "shadow"]);
       const config = JSON.parse(await readFile(join(projectDir, "inkos.json"), "utf-8"));
-      expect(config.storyRuntime.mode).toBe("shadow");
-      run(["config", "set", "storyRuntime.mode", "legacy"]);
+      expect(config.storyRuntime.mode).toBe("story-runtime");
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("retired legacy/shadow write modes");
     });
 
     it("sets long-form writing review retries", async () => {
@@ -368,7 +369,7 @@ describe("CLI integration", () => {
       const data = JSON.parse(output);
       expect(data.project).toBeDefined();
       expect(data.books).toEqual([]);
-      expect(data.storyRuntime).toMatchObject({ configuredMode: "legacy", disabled: true });
+      expect(data.storyRuntime).toMatchObject({ configuredMode: "story-runtime" });
     });
 
     it("errors for nonexistent book", () => {
@@ -567,7 +568,7 @@ describe("CLI integration", () => {
       const { stdout } = runStderr(["doctor"]);
       expect(stdout).toContain("InkOS Doctor");
       expect(stdout).toContain("Node.js >= 20");
-      expect(stdout).toContain("SQLite memory index");
+      expect(stdout).not.toContain("SQLite memory index");
       expect(stdout).toContain("inkos.json");
     });
 
@@ -952,39 +953,24 @@ describe("CLI integration", () => {
       ]);
     });
 
-    it("loads a pre-planned intent and returns the generated intent path in JSON mode", async () => {
-      const output = run(["compose", "chapter", "cli-book", "--json"]);
-      const data = JSON.parse(output);
-
-      expect(data.bookId).toBe("cli-book");
-      expect(data.chapterNumber).toBe(1);
-      expect(data.intentPath).toContain("story/runtime/chapter-0001.intent.md");
-      await expect(stat(join(projectDir, "books", "cli-book", data.intentPath))).resolves.toBeTruthy();
+    it("does not compose from a pre-planned Markdown intent without Runtime", async () => {
+      const { stdout, exitCode } = runStderr(["compose", "chapter", "cli-book", "--json"]);
+      expect(exitCode).not.toBe(0);
+      expect(JSON.parse(stdout)).toMatchObject({ error: expect.stringMatching(/Runtime|fetch|ECONNREFUSED/i) });
     });
 
-    it("runs compose chapter and returns runtime artifact paths in JSON mode", async () => {
-      const output = run(["compose", "chapter", "cli-book", "--json"]);
-      const data = JSON.parse(output);
-
-      expect(data.bookId).toBe("cli-book");
-      expect(data.chapterNumber).toBe(1);
-      expect(data.contextPath).toContain("story/runtime/chapter-0001.context.json");
-      expect(data.ruleStackPath).toContain("story/runtime/chapter-0001.rule-stack.yaml");
-      expect(data.tracePath).toContain("story/runtime/chapter-0001.trace.json");
-
-      await expect(stat(join(projectDir, "books", "cli-book", data.contextPath))).resolves.toBeTruthy();
-      await expect(stat(join(projectDir, "books", "cli-book", data.ruleStackPath))).resolves.toBeTruthy();
-      await expect(stat(join(projectDir, "books", "cli-book", data.tracePath))).resolves.toBeTruthy();
+    it("does not build local context artifacts when Runtime is unavailable", async () => {
+      const runtimeDir = join(projectDir, "books", "cli-book", "story", "runtime");
+      const before = await stat(runtimeDir).then(() => true).catch(() => false);
+      const { exitCode } = runStderr(["compose", "chapter", "cli-book", "--json"]);
+      expect(exitCode).not.toBe(0);
+      expect(await stat(runtimeDir).then(() => true).catch(() => false)).toBe(before);
     });
 
-    it("re-plans from outline when compose runs without a new context (Phase 1: persisted plans disabled)", async () => {
-      const output = run(["compose", "chapter", "cli-book", "--json"]);
-      const data = JSON.parse(output);
-      const intentMarkdown = await readFile(join(projectDir, "books", "cli-book", data.intentPath), "utf-8");
-
-      expect(typeof data.goal).toBe("string");
-      expect(data.goal.length).toBeGreaterThan(0);
-      expect(intentMarkdown).toContain(data.goal);
+    it("does not re-plan from local outline as a hidden compatibility fallback", async () => {
+      const { stdout, exitCode } = runStderr(["compose", "chapter", "cli-book", "--json"]);
+      expect(exitCode).not.toBe(0);
+      expect(JSON.parse(stdout).error).not.toContain("story/volume_outline.md");
     });
   });
 

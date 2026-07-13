@@ -366,7 +366,7 @@ describe("WriterAgent", () => {
     }
   });
 
-  it("builds structured runtime-state artifacts when settler returns a delta", async () => {
+  it("returns a typed Runtime proposal without building local authority artifacts", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-writer-runtime-state-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -505,10 +505,10 @@ describe("WriterAgent", () => {
       });
 
       expect(output.runtimeStateDelta?.chapter).toBe(3);
-      expect(output.runtimeStateSnapshot?.manifest.lastAppliedChapter).toBe(3);
-      expect(output.updatedState).toContain("Trace the debt through the river-port ledger.");
-      expect(output.updatedHooks).toContain("mentor-debt");
-      expect(output.updatedChapterSummaries).toContain("River Ledger");
+      expect(output.runtimeStateSnapshot).toBeUndefined();
+      expect(output.updatedState).toBe("");
+      expect(output.updatedHooks).toBe("");
+      expect(output.updatedChapterSummaries).toBeUndefined();
       expect(output.chapterSummary).toContain("| 3 | River Ledger |");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -747,17 +747,17 @@ describe("WriterAgent", () => {
 
       expect(output.runtimeStateDelta?.chapter).toBe(3);
       expect(output.runtimeStateDelta?.chapterSummary?.chapter).toBe(3);
-      expect(output.runtimeStateSnapshot?.manifest.lastAppliedChapter).toBe(3);
-      expect(output.runtimeStateSnapshot?.hooks.hooks[0]?.lastAdvancedChapter).toBe(3);
-      expect(output.updatedHooks).toContain("| mentor-debt | 1 | relationship | progressing | 3 |");
-      expect(output.updatedChapterSummaries).toContain("| 3 | River Ledger |");
+      expect(output.runtimeStateDelta?.hookOps.upsert[0]?.lastAdvancedChapter).toBe(3);
+      expect(output.runtimeStateSnapshot).toBeUndefined();
+      expect(output.updatedHooks).toBe("");
+      expect(output.updatedChapterSummaries).toBeUndefined();
       expect(output.chapterSummary).toContain("| 3 | River Ledger |");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("returns the arbiter-resolved delta instead of raw new-hook candidates", async () => {
+  it("leaves new-hook arbitration to Runtime authority", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-writer-arbiter-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -888,15 +888,13 @@ describe("WriterAgent", () => {
         lengthSpec: buildLengthSpec(2200, "en"),
       });
 
-      expect(output.runtimeStateDelta?.hookOps.upsert).toEqual([
+      expect(output.runtimeStateDelta?.hookOps.upsert).toEqual([]);
+      expect(output.runtimeStateDelta?.newHookCandidates).toEqual([
         expect.objectContaining({
-          hookId: "anonymous-source-scope",
-          lastAdvancedChapter: 3,
+          type: "source-risk",
         }),
       ]);
-      expect(output.runtimeStateDelta?.newHookCandidates).toEqual([]);
-      expect(output.updatedHooks).toContain("anonymous-source-scope");
-      expect(output.updatedHooks).toContain("| anonymous-source-scope | 1 | source-risk | progressing | 3 |");
+      expect(output.updatedHooks).toBe("");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

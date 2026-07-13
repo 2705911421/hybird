@@ -18,14 +18,10 @@ import type { PipelineRunner } from "../pipeline/runner.js";
 import { assertWithinContextWindow, estimatePiContextTokens } from "../llm/provider.js";
 import { buildAgentSystemPrompt } from "./agent-system-prompt.js";
 import {
-  createPatchChapterTextTool,
-  createReplaceChapterTextTool,
-  createRenameEntityTool,
   createSubAgentTool,
   createReadTool,
   createGrepTool,
   createLsTool,
-  createWriteTruthFileTool,
   createShortFictionRunTool,
   createGenerateCoverTool,
   createPlayEditTool,
@@ -40,7 +36,6 @@ import {
   createResearchWebTool,
   createIngestMaterialTool,
   createRetrieveMaterialTool,
-  createImportChaptersTool,
 } from "./agent-tools.js";
 import { createFilmAuthoringTools, filmLLMDepsFromClient } from "./film-authoring-tools.js";
 import { createBookContextTransform } from "./context-transform.js";
@@ -762,7 +757,6 @@ function createAgentToolsForMode(params: {
   const researchTool = createResearchWebTool(params.projectRoot);
   const materialTool = createIngestMaterialTool(params.projectRoot);
   const materialRetrievalTool = createRetrieveMaterialTool(params.projectRoot);
-  const importChaptersTool = createImportChaptersTool(params.pipeline, params.bookId, params.projectRoot);
   const isConfirmed = (
     intent: NonNullable<AgentSessionConfig["requestedIntent"]>,
   ): boolean => {
@@ -774,7 +768,7 @@ function createAgentToolsForMode(params: {
     if (isConfirmed("translation_create")) {
       return [createTranslationCreateTool(params.projectRoot, { actionPayload: params.actionPayload })];
     }
-    return [proposalTool, researchTool, materialTool, materialRetrievalTool, importChaptersTool];
+    return [proposalTool, researchTool, materialTool, materialRetrievalTool];
   }
 
   if (params.sessionKind === "short") {
@@ -861,20 +855,16 @@ function createAgentToolsForMode(params: {
     subAgentTool,
     createGenerateCoverTool(params.projectRoot, { actionPayload: params.actionPayload }),
     createReadTool(params.projectRoot, { allowSystemPaths: params.allowSystemFileRead }),
-    createWriteTruthFileTool(params.pipeline, params.projectRoot, params.bookId),
-    createRenameEntityTool(params.pipeline, params.projectRoot, params.bookId),
-    createPatchChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
-    createReplaceChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
+    proposalTool,
     researchTool,
     materialTool,
     materialRetrievalTool,
-    importChaptersTool,
     createGrepTool(params.projectRoot),
     createLsTool(params.projectRoot),
   ];
 
   if (params.sessionKind === "edit") {
-    return bookTools.filter((tool) => !["sub_agent", "generate_cover", "research_web", "import_chapters"].includes(tool.name));
+    return bookTools.filter((tool) => !["sub_agent", "generate_cover", "research_web"].includes(tool.name));
   }
 
   return bookTools;

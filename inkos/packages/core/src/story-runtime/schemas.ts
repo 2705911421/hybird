@@ -6,14 +6,14 @@ export const StoryRuntimeModeSchema = z.enum(["legacy", "story-runtime", "shadow
 export type StoryRuntimeMode = z.infer<typeof StoryRuntimeModeSchema>;
 
 export const StoryRuntimeConfigSchema = z.object({
-  mode: StoryRuntimeModeSchema.default("legacy"),
+  mode: StoryRuntimeModeSchema.default("story-runtime"),
   baseUrl: z.string().url().default("http://127.0.0.1:47831"),
   apiTokenEnv: z.string().min(1).optional(),
   timeoutMs: z.number().int().min(100).max(60_000).default(3_000),
   maxContextTokens: z.number().int().min(256).max(100_000).default(16_000),
   maxItems: z.number().int().min(1).max(500).default(100),
-  fallbackOnUnavailable: z.boolean().default(true),
-}).strict().default({ mode: "legacy" });
+  fallbackOnUnavailable: z.boolean().default(false),
+}).strict().default({ mode: "story-runtime" });
 
 export type StoryRuntimeConfig = z.infer<typeof StoryRuntimeConfigSchema>;
 
@@ -181,6 +181,12 @@ export const FinalizedCommitResultSchema = z.object({
   replayed: z.boolean(),
 }).strict();
 
+export const TypedDiffResultSchema = z.object({
+  request_id: z.string().uuid(), project_id: z.string(), status: z.literal("completed"),
+  revision: z.number().int().nonnegative(), event_count: z.number().int().positive(),
+  projection_hash: z.string().regex(/^[a-f0-9]{64}$/), replayed: z.boolean(),
+}).strict();
+
 export const ChapterArtifactResultSchema = z.object({
   project_id: z.string(), chapter_number: z.number().int().positive(), revision: z.number().int().positive(),
   commit_id: z.string().uuid(), title: z.string(), body: z.string(), summary: z.string(),
@@ -288,6 +294,7 @@ export type RuntimeContextConflict = z.infer<typeof ContextConflictSchema>;
 export type PrepareChapterResult = z.infer<typeof PrepareChapterResultSchema>;
 export type ValidateChapterResult = z.infer<typeof ValidateChapterResultSchema>;
 export type FinalizedCommitResult = z.infer<typeof FinalizedCommitResultSchema>;
+export type TypedDiffResult = z.infer<typeof TypedDiffResultSchema>;
 export type ProjectCreatedResult = z.infer<typeof ProjectCreatedResultSchema>;
 export type ChapterArtifactResult = z.infer<typeof ChapterArtifactResultSchema>;
 export type LegacyMigrationJob = z.infer<typeof LegacyMigrationJobSchema>;

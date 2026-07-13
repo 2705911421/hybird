@@ -11,6 +11,7 @@ from . import SCHEMA_VERSION
 from .contracts import (
     AppendEventsRequest,
     AppendEventsResult,
+    TypedDiffCommandRequest,
     ChapterArtifacts,
     ChapterArtifactResult,
     CommitChapterRequest,
@@ -439,6 +440,66 @@ class ChapterCommitService:
                 return result
         except sqlite3.OperationalError as exc:
             self._raise_operational(exc)
+
+    def apply_typed_diff(self, request: TypedDiffCommandRequest) -> AppendEventsResult:
+        """Validate and atomically apply a user-authored domain diff."""
+        operator_request = AppendEventsRequest(
+            request_id=request.request_id,
+            idempotency_key=request.idempotency_key,
+            project_id=request.project_id,
+            schema_version=request.schema_version,
+            expected_revision=request.expected_revision,
+            events=request.events,
+            reason=f"{request.actor}: {request.reason}",
+            admin_scope="story-runtime.events.append",
+        )
+        with self.database.connect() as conn:
+            replay = conn.execute(
+                "SELECT 1 FROM idempotency_ledger WHERE project_id=? AND idempotency_key=?",
+                (request.project_id, request.idempotency_key),
+            ).fetchone()
+        if replay:
+            return self.append_operator_events(operator_request)
+        allowed = {
+            "entity.upsert": "entity",
+            "relationship.upsert": "relationship",
+            "fact.upsert": "fact",
+            "timeline.upsert": "timeline",
+            "thread.upsert": "narrative_thread",
+            "thread.resolve": "narrative_thread",
+            "thread.defer": "narrative_thread",
+        }
+        if forbidden := forbidden_agent_field(request.model_dump(mode="json")):
+            raise ConflictError("FORBIDDEN_COMMAND_CAPABILITY", f"typed diff contains forbidden capability field: {forbidden}")
+        for event in request.events:
+            expected_aggregate = allowed.get(event.event_type)
+            if expected_aggregate is None or event.aggregate_type != expected_aggregate:
+                raise ConflictError("TYPED_DIFF_EVENT_INVALID", f"unsupported typed diff event: {event.event_type}/{event.aggregate_type}")
+        with self.database.connect() as conn:
+            project = self._runtime_project(conn, request.project_id)
+            self._check_revision(project, request.expected_revision)
+            probe = ChapterArtifacts(
+                chapter_number=max(1, int(project["latest_chapter"]) or 1),
+                title="typed-diff",
+                body="",
+                body_sha256=hashlib.sha256(b"").hexdigest(),
+                events=request.events,
+                outline_fulfillment={},
+                summary="typed-diff",
+                review={},
+                state_mutation_proposal={},
+                evidence_spans=[],
+            )
+            issues = self._validate_authority_conflicts(conn, request.project_id, probe)
+        blocking = [issue for issue in issues if issue.severity == "blocking"]
+        if blocking:
+            raise ConflictError(
+                "TYPED_DIFF_VALIDATION_FAILED",
+                "typed diff conflicts with current authority",
+                current_revision=request.expected_revision,
+                details={"issues": [issue.model_dump(mode="json") for issue in blocking]},
+            )
+        return self.append_operator_events(operator_request)
 
     def recover(self, request: CommitRecoveryRequest) -> CommitRecoveryResult:
         if request.admin_scope != "story-runtime.commits.recover":

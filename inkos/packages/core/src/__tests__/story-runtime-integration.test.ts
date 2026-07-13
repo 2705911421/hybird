@@ -1,12 +1,8 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BookConfig } from "../models/book.js";
 import type { PlanChapterOutput } from "../agents/planner.js";
-import { StoryRuntimeClient, StoryRuntimeClientError } from "../story-runtime/client.js";
+import { StoryRuntimeClient } from "../story-runtime/client.js";
 import {
-  LegacyTruthContextProvider,
   StoryRuntimeContextProvider,
   sanitizeUntrustedText,
   selectContextProvider,
@@ -59,11 +55,6 @@ function clientFor(payload: unknown): StoryRuntimeClient {
 }
 
 describe("Story Runtime Phase 2/3 integration", () => {
-  const roots: string[] = [];
-  afterEach(async () => {
-    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  });
-
   it("validates the public context contract and builds all five layers with metadata", async () => {
     const provider = new StoryRuntimeContextProvider(clientFor(runtimePayload()));
     const result = await provider.build(request);
@@ -119,23 +110,15 @@ describe("Story Runtime Phase 2/3 integration", () => {
     expect(result.selectedContext.find((item) => item.source.includes("conflict:ren-status"))?.reason).toContain("did not select a winner");
   });
 
-  it("falls back to legacy on runtime unavailability without writing project state", async () => {
+  it("fails closed on runtime unavailability", async () => {
     const unavailable: ContextProvider = {
       name: "story-runtime",
-      build: async () => { throw new StoryRuntimeClientError("offline", "unavailable"); },
+      build: async () => { throw new Error("offline"); },
     };
-    const legacy = new LegacyTruthContextProvider(async () => [{ source: "story/current_state.md", reason: "legacy", excerpt: "safe" }]);
-    const root = await mkdtemp(join(tmpdir(), "inkos-runtime-fallback-")); roots.push(root);
-    const selected = await selectContextProvider({
-      mode: "story-runtime", legacy, runtime: unavailable, request, runtimeDir: root, fallbackOnUnavailable: true,
-    });
-    expect(selected.contextPackage.selectedContext[0]?.source).toBe("story/current_state.md");
-    expect(selected.notes).toEqual(["story-runtime-fallback:unavailable"]);
-    await expect(readdir(root)).resolves.toEqual([]);
+    await expect(selectContextProvider({ mode: "story-runtime", runtime: unavailable, request })).rejects.toThrow("offline");
   });
 
-  it("shadow mode writes a diff but returns legacy context for writing", async () => {
-    const legacy = new LegacyTruthContextProvider(async () => [{ source: "story/current_state.md", reason: "legacy", excerpt: "legacy truth" }]);
+  it("rejects retired shadow mode instead of selecting a legacy writer", async () => {
     const runtime: ContextProvider = {
       name: "story-runtime",
       build: async () => contextPackageFromSelected(4, [{
@@ -143,15 +126,7 @@ describe("Story Runtime Phase 2/3 integration", () => {
         layer: "hard_constraints", confidence: 1, updatedAt: timestamp, importance: 100, trust: "trusted",
       }], []),
     };
-    const root = await mkdtemp(join(tmpdir(), "inkos-runtime-shadow-")); roots.push(root);
-    const selected = await selectContextProvider({
-      mode: "shadow", legacy, runtime, request, runtimeDir: root, fallbackOnUnavailable: true,
-    });
-    expect(selected.contextPackage.selectedContext[0]?.excerpt).toBe("legacy truth");
-    expect(selected.shadowDiffPath).toBeTruthy();
-    const report = JSON.parse(await readFile(selected.shadowDiffPath!, "utf-8"));
-    expect(report.writingProvider).toBe("legacy");
-    expect(report.onlyStoryRuntime).toContain("story-runtime/hard_constraints/fact-ren");
+    await expect(selectContextProvider({ mode: "shadow", runtime, request })).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
   });
 
   it("exposes only the governed Phase 4 chapter lifecycle to normal InkOS callers", () => {

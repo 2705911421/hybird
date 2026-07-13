@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { access, readFile, rm } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { join, resolve } from "node:path";
-import { deriveBookIdFromTitle, normalizePlatformOrOther, PipelineRunner, StateManager, StoryRuntimeClient, type BookConfig } from "@actalk/inkos-core";
+import { deriveBookIdFromTitle, normalizePlatformOrOther, PipelineRunner, StateManager, type BookConfig } from "@actalk/inkos-core";
 import {
   formatBookCreateCreated,
   formatBookCreateCreating,
@@ -26,7 +26,6 @@ bookCommand
   .option("--chapter-words <n>", "Words per chapter", "3000")
   .option("--brief <path>", "Path to creative brief file (.md/.txt) — Architect builds from your ideas instead of generating from scratch")
   .option("--lang <language>", "Writing language: zh (Chinese) or en (English). Defaults from genre.")
-  .option("--authority <mode>", "Canonical persistence authority: legacy or runtime", "legacy")
   .option("--json", "Output JSON")
   .action(async (opts) => {
     try {
@@ -48,18 +47,8 @@ bookCommand
       }
 
       const config = await loadConfig();
-      if (opts.authority !== "legacy" && opts.authority !== "runtime") {
-        throw new Error("--authority must be legacy or runtime");
-      }
-      if (opts.authority === "runtime") {
-        if (config.storyRuntime.mode === "legacy") {
-          throw new Error("Runtime authority requires storyRuntime.mode to be story-runtime or shadow.");
-        }
-        const client = new StoryRuntimeClient({
-          baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
-          apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
-        });
-        await client.createProject({ projectId: bookId, idempotencyKey: `create:${bookId}:runtime-authority` });
+      if (config.storyRuntime.mode !== "story-runtime") {
+        throw new Error("Runtime authority requires storyRuntime.mode to be story-runtime.");
       }
       const now = new Date().toISOString();
       const book: BookConfig = {
@@ -73,7 +62,7 @@ bookCommand
         language: opts.lang ?? config.language,
         createdAt: now,
         updatedAt: now,
-        authorityMode: opts.authority,
+        authorityMode: "runtime",
       };
       const language = resolveCliLanguage(book.language);
 

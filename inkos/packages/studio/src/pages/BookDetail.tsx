@@ -351,24 +351,6 @@ export function BookDetail({
     });
   };
 
-  const handleReviseFoundation = async () => {
-    const feedback = window.prompt(
-      data?.book.language === "en"
-        ? "Foundation revision feedback. This rewrites the book foundation, not chapter body."
-        : "输入重修基础设定的反馈。此操作会重写基础设定，不直接改正文。",
-      "",
-    );
-    if (!feedback?.trim()) return;
-    await runBookAction("revise-foundation", async () => {
-      await fetchJson(`/books/${bookId}/foundation/revise`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedback }),
-      });
-      return data?.book.language === "en" ? "Foundation revised." : "基础设定已重修。";
-    });
-  };
-
   const handlePlan = async () => {
     const context = window.prompt(
       data?.book.language === "en"
@@ -577,14 +559,6 @@ export function BookDetail({
           >
             <Database size={14} />
             {bookActionPending === "consolidate" ? t("common.loading") : t("book.consolidate")}
-          </button>
-          <button
-            onClick={handleReviseFoundation}
-            disabled={bookActionPending === "revise-foundation"}
-            className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-secondary/50 text-muted-foreground rounded-lg hover:text-foreground hover:bg-secondary transition-all border border-border/50 disabled:opacity-50"
-          >
-            <Sparkles size={14} />
-            {bookActionPending === "revise-foundation" ? t("common.loading") : t("book.reviseFoundation")}
           </button>
           <button
             onClick={handlePlan}

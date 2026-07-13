@@ -209,7 +209,6 @@ export {
 export { InkOSReviewAdapter, InkOSRevisionAdapter, ReviewArtifactMapper, reviewFindingFingerprint, type UnifiedReviewViewModel, type UnifiedReviewFinding } from "./review-artifacts/adapters.js";
 export { parseUntrustedArtifact, UntrustedArtifactError, MAX_REVIEW_ARTIFACT_BYTES } from "./review-artifacts/untrusted-parser.js";
 export {
-  LegacyChapterPersistence,
   StoryRuntimeChapterPersistence,
   RuntimeValidationBlockedError,
   buildRuntimeArtifacts,
@@ -218,7 +217,6 @@ export {
   type ChapterPersistenceResult,
 } from "./pipeline/chapter-persistence-port.js";
 export {
-  LegacyTruthContextProvider,
   StoryRuntimeContextProvider,
   contextPackageFromSelected,
   sanitizeUntrustedText,
@@ -529,9 +527,8 @@ export {
 export { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "./utils/context-filter.js";
 export { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "./utils/pov-filter.js";
 export { ConsolidatorAgent } from "./agents/consolidator.js";
-export { MemoryDB, type Fact, type StoredSummary } from "./state/memory-db.js";
 export { StateValidatorAgent } from "./agents/state-validator.js";
-export { loadRuntimeStateSnapshot, buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts, type RuntimeStateArtifacts, type NarrativeMemorySeed } from "./state/runtime-state-store.js";
+export { loadRuntimeStateSnapshot, loadNarrativeMemorySeed, loadSnapshotCurrentStateFacts, type NarrativeMemorySeed } from "./state/runtime-state-store.js";
 export { splitChapters, type SplitChapter } from "./utils/chapter-splitter.js";
 export * from "./translation/index.js";
 export { countChapterLength, resolveLengthCountingMode, formatLengthCount, buildLengthSpec, defaultChapterLength, DEFAULT_CHAPTER_LENGTH_ZH, DEFAULT_CHAPTER_LENGTH_EN, isOutsideSoftRange, isOutsideHardRange, chooseNormalizeMode, type LengthLanguage } from "./utils/length-metrics.js";
@@ -557,7 +554,6 @@ export {
   type HookAdmissionDecision,
   type HookDisposition,
 } from "./utils/hook-governance.js";
-export { arbitrateRuntimeStateDeltaHooks, type HookArbiterDecision } from "./utils/hook-arbiter.js";
 export { analyzeHookHealth } from "./utils/hook-health.js";
 
 // Pipeline
@@ -569,7 +565,6 @@ export { ScriptCreationAgent, StoryboardCreationAgent, InteractiveFilmCreationAg
 
 // State
 export { BookWriteLockError, StateManager } from "./state/manager.js";
-export { bootstrapStructuredStateFromMarkdown } from "./state/state-bootstrap.js";
 export { renderCurrentStateProjection, renderHooksProjection, renderChapterSummariesProjection } from "./state/state-projections.js";
 export { applyRuntimeStateDelta, type RuntimeStateSnapshot } from "./state/state-reducer.js";
 export { validateRuntimeState, type RuntimeStateValidationIssue } from "./state/state-validator.js";

@@ -30,7 +30,7 @@ describe("retrieveMemorySelection", () => {
     vi.doUnmock("../state/memory-db.js");
   });
 
-  it("indexes current state facts into sqlite-backed memory selection", async () => {
+  it("selects current state facts without opening InkOS memory.db", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -75,11 +75,7 @@ describe("retrieveMemorySelection", () => {
         }),
       ]),
     );
-    if (hasNodeSqlite) {
-      expect(result.dbPath).toContain("memory.db");
-    } else {
-      expect(result.dbPath).toBeUndefined();
-    }
+    expect(result.dbPath).toBeUndefined();
   });
 
   it("does not treat unpromoted hook seeds as active debt", async () => {
@@ -403,7 +399,7 @@ describe("retrieveMemorySelection", () => {
     expect(result.summaries.at(-1)?.chapter).toBe(50);
   });
 
-  sqliteIt("uses existing sqlite summaries and hooks without requiring markdown truth files", async () => {
+  sqliteIt("ignores legacy sqlite summaries and hooks in long-form retrieval", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-db-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -453,9 +449,9 @@ describe("retrieveMemorySelection", () => {
       mustKeep: ["Lin Yue does not abandon the mentor debt."],
     });
 
-    expect(result.dbPath).toContain("memory.db");
-    expect(result.summaries.map((summary) => summary.chapter)).toContain(9);
-    expect(result.hooks.map((hook) => hook.hookId)).toContain("mentor-debt");
+    expect(result.dbPath).toBeUndefined();
+    expect(result.summaries.map((summary) => summary.chapter)).not.toContain(9);
+    expect(result.hooks.map((hook) => hook.hookId)).not.toContain("mentor-debt");
   });
 
   sqliteIt("backfills sqlite memory from structured state instead of stale markdown truth files", async () => {
@@ -583,7 +579,7 @@ describe("retrieveMemorySelection", () => {
     expect(result.summaries.map((summary) => summary.title)).toContain("Structured Summary");
   });
 
-  it("bootstraps structured runtime state from legacy markdown truth files during retrieval", async () => {
+  it("does not bootstrap authority state from legacy markdown during retrieval", async () => {
     root = await mkdtemp(join(tmpdir(), "inkos-memory-retrieval-bootstrap-test-"));
     const bookDir = join(root, "book");
     const storyDir = join(bookDir, "story");
@@ -631,15 +627,10 @@ describe("retrieveMemorySelection", () => {
       mustKeep: ["Lin Yue does not abandon the mentor debt."],
     });
 
-    const manifest = JSON.parse(await readFile(join(stateDir, "manifest.json"), "utf-8"));
-    const currentState = JSON.parse(await readFile(join(stateDir, "current_state.json"), "utf-8"));
-    const hooks = JSON.parse(await readFile(join(stateDir, "hooks.json"), "utf-8"));
-    const summaries = JSON.parse(await readFile(join(stateDir, "chapter_summaries.json"), "utf-8"));
-
-    expect(manifest.schemaVersion).toBe(2);
-    expect(currentState.chapter).toBe(12);
-    expect(hooks.hooks[0]?.hookId).toBe("mentor-debt");
-    expect(summaries.rows[0]?.title).toBe("Mentor Debt Echo");
+    await expect(readFile(join(stateDir, "manifest.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(stateDir, "current_state.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(stateDir, "hooks.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(stateDir, "chapter_summaries.json"), "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.hooks.map((hook) => hook.hookId)).toContain("mentor-debt");
   });
 

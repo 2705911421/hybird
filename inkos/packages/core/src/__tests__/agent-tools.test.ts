@@ -9,17 +9,12 @@ import {
   createGenerateCoverTool,
   createSubAgentTool,
   createShortFictionRunTool,
-  createPatchChapterTextTool,
-  createReplaceChapterTextTool,
   createPlayEditTool,
   createPlayStartTool,
   createProposeActionTool,
-  createRenameEntityTool,
   createScriptCreationTool,
   createStoryboardCreationTool,
   createInteractiveFilmCreationTool,
-  createWriteFileTool,
-  createWriteTruthFileTool,
 } from "../agent/agent-tools.js";
 import { createPlayDB } from "../play/play-db-factory.js";
 import { PlayStore } from "../play/play-store.js";
@@ -66,104 +61,6 @@ describe("agent deterministic writing tools", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
-  });
-
-  it("writes truth files through the deterministic tool path", async () => {
-    const tool = createWriteTruthFileTool({} as never, root, "harbor");
-
-    const result = await tool.execute("tool-1", {
-      fileName: "story_bible.md",
-      content: "# Story Bible\n\nLin Yue now distrusts the guild.\n",
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    await expect(readFile(join(state.bookDir("harbor"), "story", "story_bible.md"), "utf-8"))
-      .resolves.toContain("distrusts the guild");
-  });
-
-  it("writes role cards through the deterministic truth-file tool path", async () => {
-    const tool = createWriteTruthFileTool({} as never, root, "harbor");
-
-    const result = await tool.execute("tool-role", {
-      fileName: "roles/主要角色/林月.md",
-      content: "# 林月\n\n- 动机：守住码头账册，但不再相信公会。\n",
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    await expect(readFile(join(state.bookDir("harbor"), "story", "roles", "主要角色", "林月.md"), "utf-8"))
-      .resolves.toContain("不再相信公会");
-  });
-
-  it("renames entities through the deterministic edit controller", async () => {
-    const tool = createRenameEntityTool({} as never, root, "harbor");
-
-    await tool.execute("tool-3", {
-      oldValue: "Lin Yue",
-      newValue: "Lin Yan",
-    });
-
-    await expect(readFile(join(state.bookDir("harbor"), "story", "story_bible.md"), "utf-8"))
-      .resolves.toContain("Lin Yan");
-    await expect(readFile(join(state.bookDir("harbor"), "chapters", "0003_Storm.md"), "utf-8"))
-      .resolves.toContain("Lin Yan");
-  });
-
-  it("patches chapter text through the deterministic edit controller", async () => {
-    const tool = createPatchChapterTextTool({} as never, root, "harbor");
-
-    await tool.execute("tool-4", {
-      chapterNumber: 3,
-      targetText: "jade seal hidden",
-      replacementText: "jade seal locked beneath the altar",
-    });
-
-    await expect(readFile(join(state.bookDir("harbor"), "chapters", "0003_Storm.md"), "utf-8"))
-      .resolves.toContain("locked beneath the altar");
-    await expect(state.loadChapterIndex("harbor")).resolves.toEqual([
-      expect.objectContaining({
-        number: 3,
-        status: "audit-failed",
-        auditIssues: expect.arrayContaining([
-          expect.stringContaining("Manual text edit requires review"),
-        ]),
-      }),
-    ]);
-  });
-
-  it("patches a high-confidence paragraph match when the model paraphrases the target text", async () => {
-    const tool = createPatchChapterTextTool({} as never, root, "harbor");
-
-    await tool.execute("tool-4-fuzzy", {
-      chapterNumber: 3,
-      targetText: "Lin Yue kept the jade seal under wet burlap and told no one from the guild.",
-      replacementText: "Lin Yue locked the jade seal beneath the altar and let the guild keep guessing.",
-    });
-
-    const updated = await readFile(join(state.bookDir("harbor"), "chapters", "0003_Storm.md"), "utf-8");
-    expect(updated).toContain("beneath the altar");
-    expect(updated).not.toContain("wet burlap");
-  });
-
-  it("replaces whole chapter text through the deterministic edit controller", async () => {
-    const tool = createReplaceChapterTextTool({} as never, root, "harbor");
-
-    await tool.execute("tool-4b", {
-      chapterNumber: 3,
-      fullText: "# 第3章 整章替换\n\n这是用户提供的完整新正文。",
-    });
-
-    await expect(readFile(join(state.bookDir("harbor"), "chapters", "0003_Storm.md"), "utf-8"))
-      .resolves.toContain("完整新正文");
-    await expect(state.loadChapterIndex("harbor")).resolves.toEqual([
-      expect.objectContaining({
-        number: 3,
-        status: "audit-failed",
-        wordCount: expect.any(Number),
-        auditIssues: expect.arrayContaining([
-          expect.stringContaining("Manual chapter replacement requires review"),
-        ]),
-      }),
-    ]);
   });
 
   it("requires an explicit title when the architect sub-agent creates a book", async () => {
@@ -883,7 +780,7 @@ describe("agent deterministic writing tools", () => {
       .not.toContain("play_start");
   });
 
-  it("allows architect revise mode to use the active book", async () => {
+  it("blocks architect revise mode even with an active book", async () => {
     const pipeline = {
       reviseFoundation: vi.fn(async () => undefined),
     };
@@ -896,10 +793,10 @@ describe("agent deterministic writing tools", () => {
       instruction: "重写架构稿",
     } as any);
 
-    expect(pipeline.reviseFoundation).toHaveBeenCalledWith("harbor", "把角色目录改成一人一卡");
+    expect(pipeline.reviseFoundation).not.toHaveBeenCalled();
     expect(result.content[0]?.type).toBe("text");
     if (result.content[0]?.type === "text") {
-      expect(result.content[0].text).toContain("harbor");
+      expect(result.content[0].text).toContain("typed diff proposal");
     }
   });
 
@@ -920,7 +817,7 @@ describe("agent deterministic writing tools", () => {
     expect(pipeline.reviseFoundation).not.toHaveBeenCalled();
     expect(result.content[0]?.type).toBe("text");
     if (result.content[0]?.type === "text") {
-      expect(result.content[0].text).toContain("Open the book first");
+      expect(result.content[0].text).toContain("typed diff proposal");
     }
   });
 
@@ -1012,56 +909,14 @@ describe("agent deterministic writing tools", () => {
     }
   });
 
-  it("creates nested files through the generic write tool", async () => {
-    const tool = createWriteFileTool(root);
-
-    const result = await tool.execute("tool-10", {
-      path: "harbor/story/runtime/notes.md",
-      content: "# Notes\n\nWatch the harbor ledger.\n",
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    await expect(readFile(join(state.bookDir("harbor"), "story", "runtime", "notes.md"), "utf-8"))
-      .resolves.toContain("Watch the harbor ledger");
-  });
-
-  it("writes Phase 5 outline truth files through write_truth_file", async () => {
-    const tool = createWriteTruthFileTool({} as never, root, "harbor");
-
-    const result = await tool.execute("tool-truth-outline", {
-      fileName: "outline/story_frame.md",
-      content: "# Story Frame\n\nThe harbor debt is the central pressure.\n",
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    await expect(readFile(join(state.bookDir("harbor"), "story", "outline", "story_frame.md"), "utf-8"))
-      .resolves.toContain("central pressure");
-  });
-
-  it("writes Phase 5 role truth files through write_truth_file", async () => {
-    const tool = createWriteTruthFileTool({} as never, root, "harbor");
-
-    const result = await tool.execute("tool-truth-role", {
-      fileName: "roles/major/Lin Yan.md",
-      content: "# Lin Yan\n\nKeeps the ledger hidden.\n",
-    });
-
-    expect(result.content[0]?.type).toBe("text");
-    await expect(readFile(join(state.bookDir("harbor"), "story", "roles", "major", "Lin Yan.md"), "utf-8"))
-      .resolves.toContain("ledger hidden");
-  });
-
-  it("rejects unsafe truth file names", async () => {
-    const tool = createWriteTruthFileTool({} as never, root, "harbor");
-
-    const result = await tool.execute("tool-truth-unsafe", {
-      fileName: "../escape.md",
-      content: "escape",
-    });
-
+  it("denies direct Agent reads of Runtime databases and migration snapshots", async () => {
+    const runtimeDb = join(root, "story.db");
+    await writeFile(runtimeDb, "not-a-real-db", "utf-8");
+    const tool = createReadTool(root, { allowSystemPaths: true });
+    const result = await tool.execute("tool-read-runtime-db", { path: runtimeDb });
     expect(result.content[0]?.type).toBe("text");
     if (result.content[0]?.type === "text") {
-      expect(result.content[0].text).toContain("Invalid truth file name");
+      expect(result.content[0].text).toContain("AUTHORITY_PATH_FORBIDDEN");
     }
   });
 

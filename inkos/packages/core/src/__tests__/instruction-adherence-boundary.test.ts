@@ -30,7 +30,7 @@ const CASES: readonly PromptCase[] = [
   ["play/confirmed-start runs start only", "zh", "play", null, { actionSource: "button", requestedIntent: "play_start", playWorldExists: false }, ["play_start"], ["propose_action", "play_revise", "play_step：", "play_step:"]],
   ["book/active can write/edit only", "zh", "book", "demo-book", undefined, ["sub_agent", "writer", "auditor", "reviser"], ["agent=\"architect\"", "short_fiction_run", "play_start", "play_revise", "play_step"]],
   ["book/en active can write/edit only", "en", "book", "demo-book", undefined, ["sub_agent", "writer", "auditor", "reviser"], ["agent=\"architect\"", "short_fiction_run", "play_start", "play_revise", "play_step"]],
-  ["edit/active deterministic only", "zh", "edit", "demo-book", undefined, ["read", "write_truth_file", "rename_entity", "patch_chapter_text"], ["sub_agent", "generate_cover", "short_fiction_run", "play_start", "play_revise", "play_step"]],
+  ["edit/active proposal only", "zh", "edit", "demo-book", undefined, ["read", "typed diff proposal", "Runtime chapter-revision request"], ["write_truth_file", "rename_entity", "patch_chapter_text", "sub_agent", "generate_cover", "short_fiction_run", "play_start", "play_revise", "play_step"]],
 ];
 
 describe("instruction adherence prompt boundary", () => {

@@ -28,7 +28,7 @@ describe("Studio Story Runtime status endpoints", () => {
     const app = createStudioServer({} as never, root);
     const response = await app.request("/api/v1/story-runtime/status");
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ mode: "legacy", enabled: false, health: null, featureFlags: { panel: true, recovery: true } });
+    expect(await response.json()).toMatchObject({ mode: "legacy", enabled: false, readOnly: true, health: null, featureFlags: { panel: true, recovery: true } });
   });
 
   it("displays live runtime health through the public client", async () => {
@@ -49,7 +49,7 @@ describe("Studio Story Runtime status endpoints", () => {
     const app = createStudioServer({} as never, root);
     const response = await app.request("/api/v1/story-runtime/status");
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ mode: "shadow", enabled: true, health: { status: "ok", database: "ready" } });
+    expect(await response.json()).toMatchObject({ mode: "shadow", enabled: false, readOnly: true, health: null });
   });
 
   it("rejects direct chapter and Truth writes for Runtime-authority books", async () => {
@@ -71,8 +71,61 @@ describe("Studio Story Runtime status endpoints", () => {
     const truth = await app.request("/api/v1/books/runtime-book/truth/current_state.md", {
       method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "new" }),
     });
-    expect(chapter.status).toBe(409);
-    expect(truth.status).toBe(409);
+    expect(chapter.status).toBe(410);
+    expect(truth.status).toBe(410);
+  });
+
+  it("proxies typed diffs with revision and write metadata to Runtime", async () => {
+    let received: Record<string, unknown> | undefined;
+    const server = createServer(async (request, response) => {
+      response.setHeader("content-type", "application/json");
+      if (request.method === "POST" && request.url === "/api/story-runtime/v1/commands/typed-diff") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        received = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+        return response.end(JSON.stringify({
+          request_id: received.request_id,
+          project_id: "runtime-book",
+          status: "completed",
+          revision: 4,
+          event_count: 1,
+          projection_hash: "a".repeat(64),
+          replayed: false,
+        }));
+      }
+      response.statusCode = 404;
+      return response.end(JSON.stringify({ error: "not found" }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    const root = await mkdtemp(join(tmpdir(), "inkos-studio-typed-diff-")); roots.push(root);
+    await writeConfig(root, { mode: "story-runtime", baseUrl: `http://127.0.0.1:${port}` });
+    const app = createStudioServer({} as never, root);
+
+    const response = await app.request("/api/v1/story-runtime/projects/runtime-book/typed-diff", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedRevision: 3,
+        idempotencyKey: "studio-typed-diff-0001",
+        actor: "editor",
+        reason: "confirmed character update",
+        events: [{ event_type: "entity.updated", aggregate_type: "entity", aggregate_id: "char-a", payload: { name: "Lin" } }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(received).toMatchObject({
+      project_id: "runtime-book",
+      schema_version: "story-runtime/v1",
+      expected_revision: 3,
+      idempotency_key: "studio-typed-diff-0001",
+      actor: "editor",
+      reason: "confirmed character update",
+    });
+    expect(typeof received?.request_id).toBe("string");
   });
 
   it("maps Runtime reviews for Studio and stores revision-bound human decisions", async () => {

@@ -221,7 +221,8 @@ describe("agent tools language wiring (en parity)", () => {
       feedback: "tighten the antagonist arc",
       instruction: "rewrite the foundation",
     } as any);
-    expect(toolText(enRevised)).toContain("foundation has been rewritten");
+    expect(toolText(enRevised)).toContain("Phase 8 removed direct Agent foundation writes");
+    expect(pipeline.reviseFoundation).not.toHaveBeenCalled();
     expect(toolText(enRevised)).not.toMatch(/[一-鿿]/);
 
     const zhTool = createSubAgentTool(pipeline as never, "harbor");

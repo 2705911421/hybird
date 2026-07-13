@@ -76,12 +76,12 @@ function buildProjectConfig(projectDir: string, language: "zh" | "en") {
     notify: [],
     inputGovernanceMode: "v2" as const,
     storyRuntime: {
-      mode: "legacy" as const,
+      mode: "story-runtime" as const,
       baseUrl: "http://127.0.0.1:47831",
       timeoutMs: 3000,
       maxContextTokens: 16000,
       maxItems: 100,
-      fallbackOnUnavailable: true,
+      fallbackOnUnavailable: false,
     },
     unifiedReview: { enabled: true },
     daemon: {

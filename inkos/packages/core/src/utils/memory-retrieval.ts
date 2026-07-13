@@ -6,8 +6,7 @@ import {
   CurrentStateStateSchema,
   HooksStateSchema,
 } from "../models/runtime-state.js";
-import { MemoryDB, type Fact, type StoredHook, type StoredSummary } from "../state/memory-db.js";
-import { bootstrapStructuredStateFromMarkdown } from "../state/state-bootstrap.js";
+import type { Fact, StoredHook, StoredSummary } from "../state/memory-db.js";
 import {
   filterActiveHooks,
   isFuturePlannedHook,
@@ -64,11 +63,6 @@ export async function retrieveMemorySelection(params: {
   const stateDir = join(storyDir, "state");
   const fallbackChapter = Math.max(0, params.chapterNumber - 1);
 
-  await bootstrapStructuredStateFromMarkdown({
-    bookDir: params.bookDir,
-    fallbackChapter,
-  }).catch(() => undefined);
-
   const [
     currentStateMarkdown,
     hooksMarkdown,
@@ -107,48 +101,6 @@ export async function retrieveMemorySelection(params: {
   // promoted/core/dependency metadata, which is load-bearing for hook debt.
   const hooks = structuredHooks?.hooks ?? parsePendingHooksMarkdown(hooksMarkdown);
   const activeHooks = filterActiveHooks(hooks);
-
-  const memoryDb = openMemoryDB(params.bookDir);
-  if (memoryDb) {
-    try {
-      if (memoryDb.getChapterCount() === 0) {
-        const summaries = structuredSummaries?.rows ?? parseChapterSummariesMarkdown(
-          await readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-        );
-        if (summaries.length > 0) {
-          memoryDb.replaceSummaries(summaries);
-        }
-      }
-      if (memoryDb.getCurrentFacts().length === 0 && facts.length > 0) {
-        memoryDb.replaceCurrentFacts(facts);
-      }
-
-      // Structured/markdown hook state is authoritative because it preserves
-      // metadata the SQLite acceleration table does not. In migration/minimal
-      // projects that projection can be absent or empty while SQLite already
-      // has usable hook rows, so fall back only when the authority path yields
-      // no active hooks at all.
-      const effectiveActiveHooks = activeHooks.length > 0
-        ? activeHooks
-        : filterActiveHooks(memoryDb.getActiveHooks());
-
-      return {
-        summaries: selectRelevantSummaries(
-          memoryDb.getSummaries(1, Math.max(1, params.chapterNumber - 1)),
-          params.chapterNumber,
-          narrativeQueryTerms,
-        ),
-        hooks: selectRelevantHooks(effectiveActiveHooks, narrativeQueryTerms, params.chapterNumber),
-        activeHooks: effectiveActiveHooks,
-        recyclableHooks: computeRecyclableHooks(effectiveActiveHooks, params.chapterNumber),
-        facts: selectRelevantFacts(memoryDb.getCurrentFacts(), factQueryTerms),
-        volumeSummaries,
-        dbPath: join(storyDir, "memory.db"),
-      };
-    } finally {
-      memoryDb.close();
-    }
-  }
 
   const [summariesMarkdown] = await Promise.all([
     readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
@@ -224,14 +176,6 @@ export function extractQueryTerms(goal: string, outlineNode: string | undefined,
     ...primaryTerms,
     ...extractTermsFromText(stripNegativeGuidance(outlineNode ?? "")),
   ]).slice(0, 12);
-}
-
-function openMemoryDB(bookDir: string): MemoryDB | null {
-  try {
-    return new MemoryDB(bookDir);
-  } catch {
-    return null;
-  }
 }
 
 async function readStructuredState<T>(

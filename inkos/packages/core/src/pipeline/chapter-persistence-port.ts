@@ -6,7 +6,13 @@ import type { LengthTelemetry } from "../models/length-governance.js";
 import { StoryRuntimeClient, StoryRuntimeClientError, type RuntimeChapterArtifactsInput, type RuntimeStoryEventInput } from "../story-runtime/client.js";
 import { InkOSReviewAdapter } from "../review-artifacts/adapters.js";
 import { StateMutationProposalSchema } from "../review-artifacts/schemas.js";
-import { persistChapterArtifacts, type ChapterPersistenceStatus, type ChapterPersistenceUsage } from "./chapter-persistence.js";
+export interface ChapterPersistenceUsage {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+}
+
+export type ChapterPersistenceStatus = "ready-for-review" | "audit-failed" | "state-degraded";
 
 export interface ChapterPersistenceInput {
   readonly projectId: string;
@@ -19,40 +25,17 @@ export interface ChapterPersistenceInput {
   readonly degradedIssues: ReadonlyArray<AuditIssue>;
   readonly tokenUsage?: ChapterPersistenceUsage;
   readonly intent: Record<string, unknown>;
-  readonly legacy: {
-    readonly loadChapterIndex: () => Promise<ReadonlyArray<ChapterMeta>>;
-    readonly saveChapter: () => Promise<void>;
-    readonly saveTruthFiles: () => Promise<void>;
-    readonly saveChapterIndex: (index: ReadonlyArray<ChapterMeta>) => Promise<void>;
-    readonly markBookActiveIfNeeded: () => Promise<void>;
-    readonly persistAuditDriftGuidance: (issues: ReadonlyArray<AuditIssue>) => Promise<void>;
-    readonly snapshotState: () => Promise<void>;
-    readonly syncCurrentStateFactHistory: () => Promise<void>;
-    readonly logSnapshotStage: () => void;
-  };
 }
 
 export interface ChapterPersistenceResult {
   readonly entry: ChapterMeta;
-  readonly authority: "legacy" | "runtime";
+  readonly authority: "runtime";
   readonly revision?: number;
   readonly commitId?: string;
 }
 
 export interface ChapterPersistencePort {
   persist(input: ChapterPersistenceInput): Promise<ChapterPersistenceResult>;
-}
-
-export class LegacyChapterPersistence implements ChapterPersistencePort {
-  async persist(input: ChapterPersistenceInput): Promise<ChapterPersistenceResult> {
-    const result = await persistChapterArtifacts({
-      chapterNumber: input.output.chapterNumber, chapterTitle: input.output.title,
-      status: input.status, auditResult: input.auditResult, finalWordCount: input.finalWordCount,
-      lengthWarnings: input.lengthWarnings, lengthTelemetry: input.lengthTelemetry,
-      degradedIssues: input.degradedIssues, tokenUsage: input.tokenUsage, ...input.legacy,
-    });
-    return { ...result, authority: "legacy" };
-  }
 }
 
 export class RuntimeValidationBlockedError extends Error {

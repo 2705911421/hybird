@@ -160,7 +160,6 @@ const strings = {
   "book.truthFiles": { zh: "真相文件", en: "Truth Files" },
   "book.evaluate": { zh: "质量评估", en: "Evaluate" },
   "book.consolidate": { zh: "归并记忆", en: "Consolidate" },
-  "book.reviseFoundation": { zh: "重修设定", en: "Revise Foundation" },
   "book.planNext": { zh: "计划", en: "Plan" },
   "book.composeNext": { zh: "组装", en: "Compose" },
   "book.repairState": { zh: "修复状态", en: "Repair State" },

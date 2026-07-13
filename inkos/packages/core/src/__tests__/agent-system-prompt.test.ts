@@ -21,8 +21,9 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("当前正在处理书籍「my-book」");
       expect(prompt).toContain("sub_agent");
       expect(prompt).toContain("writer");
-      expect(prompt).toContain("角色卡编辑走 write_truth_file");
-      expect(prompt).toContain("roles/主要角色/<角色名>.md");
+      expect(prompt).toContain("typed diff proposal");
+      expect(prompt).toContain("Agent 不得修改章节文件");
+      expect(prompt).not.toContain("write_truth_file");
     });
 
     it("English plain chat also has no production tool instructions", () => {
@@ -37,12 +38,12 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).not.toContain("architect");
     });
 
-    it("edit mode treats role cards as editable truth files", () => {
+    it("edit mode turns authority edits into Runtime proposals", () => {
       const prompt = buildAgentSystemPrompt("my-book", "zh", "edit");
       expect(prompt).toContain("外部编辑助手");
-      expect(prompt).toContain("角色卡也是可编辑设定文件");
-      expect(prompt).toContain("roles/major/<name>.md");
-      expect(prompt).toContain("write_truth_file");
+      expect(prompt).toContain("typed diff proposal");
+      expect(prompt).toContain("不能覆盖角色卡");
+      expect(prompt).not.toContain("write_truth_file");
     });
 
     it("requires self-contained proposed action instructions", () => {
@@ -377,13 +378,13 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("approvedOnly");
       expect(prompt).toContain("generate_cover");
       expect(prompt).toContain("read");
-      expect(prompt).toContain("write_truth_file");
-      expect(prompt).toContain("rename_entity");
-      expect(prompt).toContain("patch_chapter_text");
+      expect(prompt).toContain("typed diff proposal");
+      expect(prompt).toContain("Runtime chapter-revision request");
+      expect(prompt).not.toContain("write_truth_file");
+      expect(prompt).not.toContain("rename_entity");
+      expect(prompt).not.toContain("patch_chapter_text");
       expect(prompt).toContain("grep");
       expect(prompt).toContain("ls");
-      expect(prompt).toContain("outline/story_frame.md");
-      expect(prompt).toContain("roles/major/<name>.md");
       expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("play_start");
       expect(prompt).not.toContain("play_step");
@@ -418,13 +419,14 @@ describe("buildAgentSystemPrompt", () => {
   });
 
   describe("edit mode", () => {
-    it("contains deterministic edit tools but no production tools", () => {
+    it("contains read and Runtime proposal guidance but no direct authority tools", () => {
       const prompt = buildAgentSystemPrompt("my-book", "zh", "edit");
       expect(prompt).toContain("外部编辑助手");
       expect(prompt).toContain("read");
-      expect(prompt).toContain("write_truth_file");
-      expect(prompt).toContain("rename_entity");
-      expect(prompt).toContain("patch_chapter_text");
+      expect(prompt).toContain("typed diff proposal");
+      expect(prompt).not.toContain("write_truth_file");
+      expect(prompt).not.toContain("rename_entity");
+      expect(prompt).not.toContain("patch_chapter_text");
       expect(prompt).toContain("grep");
       expect(prompt).toContain("ls");
       expect(prompt).not.toContain("sub_agent");

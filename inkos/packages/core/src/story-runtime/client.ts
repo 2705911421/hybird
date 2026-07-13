@@ -7,6 +7,7 @@ import {
   ProjectStatusResponseSchema,
   ProjectCreatedResultSchema,
   FinalizedCommitResultSchema,
+  TypedDiffResultSchema,
   PrepareChapterResultSchema,
   ValidateChapterResultSchema,
   CommitDetailSchema,
@@ -28,6 +29,7 @@ import {
   type RuntimeHealth,
   type RuntimeProjectStatus,
   type FinalizedCommitResult,
+  type TypedDiffResult,
   type PrepareChapterResult,
   type ValidateChapterResult,
   type ProjectCreatedResult,
@@ -246,6 +248,14 @@ export class StoryRuntimeClient {
       method: "POST", body: JSON.stringify({ request_id: randomUUID(), idempotency_key: input.idempotencyKey,
         project_id: input.projectId, schema_version: STORY_RUNTIME_SCHEMA_VERSION, expected_revision: input.expectedRevision,
         prepare_id: input.prepareId, validation_token: input.validationToken, artifacts: input.artifacts }),
+    });
+  }
+
+  applyTypedDiff(input: { projectId: string; idempotencyKey: string; expectedRevision: number; actor: string; reason: string; events: ReadonlyArray<RuntimeStoryEventInput> }): Promise<TypedDiffResult> {
+    return this.request("/api/story-runtime/v1/commands/typed-diff", TypedDiffResultSchema, {
+      method: "POST", body: JSON.stringify({ request_id: randomUUID(), idempotency_key: input.idempotencyKey,
+        project_id: input.projectId, schema_version: STORY_RUNTIME_SCHEMA_VERSION, expected_revision: input.expectedRevision,
+        actor: input.actor, reason: input.reason, events: input.events }),
     });
   }
 

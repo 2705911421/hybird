@@ -294,12 +294,12 @@ describe("Phase 5 hotfix 1 — Studio truth file endpoints", () => {
         body: JSON.stringify({ content: "# new" }),
       },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(410);
     const body = await response.json() as { error: string };
-    expect(body.error).toMatch(/Legacy compat shim/);
+    expect(body.error).toBe("TRUTH_PUT_REMOVED");
   });
 
-  it("writes outline/story_frame.md via PUT", async () => {
+  it("rejects direct outline/story_frame.md PUT", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -311,9 +311,8 @@ describe("Phase 5 hotfix 1 — Studio truth file endpoints", () => {
         body: JSON.stringify({ content: "---\nversion: \"1.0\"\n---\n\n# Updated" }),
       },
     );
-    expect(response.status).toBe(200);
-    const saved = await readFile(join(storyDir, "outline/story_frame.md"), "utf-8");
-    expect(saved).toContain("# Updated");
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "TRUTH_PUT_REMOVED" });
   });
 
   // Phase hotfix 3: en-locale role dirs (roles/major, roles/minor) must be
@@ -337,7 +336,7 @@ describe("Phase 5 hotfix 1 — Studio truth file endpoints", () => {
     expect(body.content).toContain("Core tag");
   });
 
-  it("writes roles/minor/<name>.md (en locale) via PUT", async () => {
+  it("rejects direct roles/minor/<name>.md PUT", async () => {
     await mkdir(join(storyDir, "roles/minor"), { recursive: true });
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -350,9 +349,8 @@ describe("Phase 5 hotfix 1 — Studio truth file endpoints", () => {
         body: JSON.stringify({ content: "# Kit\nMinor ally" }),
       },
     );
-    expect(response.status).toBe(200);
-    const saved = await readFile(join(storyDir, "roles/minor/Kit.md"), "utf-8");
-    expect(saved).toContain("Minor ally");
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "TRUTH_PUT_REMOVED" });
   });
 
   it("lists en-locale role dirs alongside zh-locale dirs", async () => {

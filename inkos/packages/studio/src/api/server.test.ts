@@ -657,7 +657,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("allows reading and updating fixed control truth files", async () => {
+  it("allows reading fixed control projections but rejects direct updates", async () => {
     const bookDir = join(root, "books", "demo-book");
     const storyDir = join(bookDir, "story");
     await mkdir(storyDir, { recursive: true });
@@ -681,10 +681,10 @@ describe("createStudioServer daemon lifecycle", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "# Current Focus\n\nPull focus back to the harbor trail.\n" }),
     });
-    expect(updateCurrentFocus.status).toBe(200);
+    expect(updateCurrentFocus.status).toBe(410);
 
     await expect(readFile(join(storyDir, "current_focus.md"), "utf-8")).resolves.toBe(
-      "# Current Focus\n\nPull focus back to the harbor trail.\n",
+      "# Current Focus\n\nReturn to the old case.\n",
     );
   });
 
@@ -726,7 +726,7 @@ describe("createStudioServer daemon lifecycle", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "{}" }),
     });
-    expect(write.status).toBe(400);
+    expect(write.status).toBe(410);
     await expect(readFile(join(storyDir, "runtime", "chapter-0001.trace.json"), "utf-8"))
       .resolves.toContain("protectedSources");
   });
@@ -2441,7 +2441,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(processProjectInteractionRequestMock).not.toHaveBeenCalled();
   });
 
-  it("uses rollback semantics for chapter rejection instead of only flipping status", async () => {
+  it("redirects chapter rejection to Runtime review authority", async () => {
     loadChapterIndexMock.mockResolvedValue([
       {
         number: 3,
@@ -2473,15 +2473,9 @@ describe("createStudioServer daemon lifecycle", () => {
       method: "POST",
     });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      ok: true,
-      chapterNumber: 3,
-      status: "rejected",
-      rolledBackTo: 2,
-      discarded: [3, 4],
-    });
-    expect(rollbackToChapterMock).toHaveBeenCalledWith("demo-book", 2);
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "RUNTIME_REVIEW_REQUIRED" });
+    expect(rollbackToChapterMock).not.toHaveBeenCalled();
     expect(saveChapterIndexMock).not.toHaveBeenCalled();
   });
 
@@ -2563,7 +2557,7 @@ describe("createStudioServer daemon lifecycle", () => {
     });
   });
 
-  it("passes one-off brief into revise requests through pipeline config", async () => {
+  it("redirects revise requests to Runtime revision authority", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -2573,12 +2567,12 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ mode: "rewrite", brief: "把注意力拉回师债主线。" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(pipelineConfigs.at(-1)).toMatchObject({ externalContext: "把注意力拉回师债主线。" });
-    expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "rewrite");
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "RUNTIME_REVISION_REQUIRED" });
+    expect(reviseDraftMock).not.toHaveBeenCalled();
   });
 
-  it("exposes a resync endpoint for rebuilding latest chapter truth artifacts", async () => {
+  it("redirects projection resync to Runtime replay", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -2588,9 +2582,9 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ brief: "以师债线为准同步状态。" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(pipelineConfigs.at(-1)).toMatchObject({ externalContext: "以师债线为准同步状态。" });
-    expect(resyncChapterArtifactsMock).toHaveBeenCalledWith("demo-book", 3);
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "RUNTIME_REPLAY_REQUIRED" });
+    expect(resyncChapterArtifactsMock).not.toHaveBeenCalled();
   });
 
   it("routes export-save through the shared structured interaction runtime", async () => {
@@ -3225,7 +3219,7 @@ describe("createStudioServer daemon lifecycle", () => {
     }));
   });
 
-  it("handles explicit chat chapter edits outside the InkOS writing agent", async () => {
+  it("rejects explicit chat chapter edits that bypass Runtime", async () => {
     loadChapterIndexMock.mockResolvedValueOnce([{
       number: 3,
       title: "Demo",
@@ -3252,24 +3246,13 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(410);
     await expect(response.json()).resolves.toMatchObject({
-      response: expect.stringContaining("已直接编辑 demo-book 第 3 章"),
-      session: {
-        sessionId: "agent-session-1",
-        activeBookId: "demo-book",
-      },
+      error: { code: "RUNTIME_TYPED_DIFF_REQUIRED" },
     });
     await expect(readFile(join(root, "books", "demo-book", "chapters", "0003_Demo.md"), "utf-8"))
-      .resolves.toContain("Body updated");
-    expect(saveChapterIndexMock).toHaveBeenCalledWith("demo-book", [
-      expect.objectContaining({
-        number: 3,
-        status: "audit-failed",
-        wordCount: expect.any(Number),
-        auditIssues: expect.arrayContaining(["[warning] Chat external edit requires review before continuation."]),
-      }),
-    ]);
+      .resolves.toContain("Body");
+    expect(saveChapterIndexMock).not.toHaveBeenCalled();
     expect(runAgentSessionMock).not.toHaveBeenCalled();
     expect(writeNextChapterMock).not.toHaveBeenCalled();
   });
@@ -3302,7 +3285,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(runAgentSessionMock).not.toHaveBeenCalled();
   });
 
-  it("handles explicit chat edits against role-card truth files", async () => {
+  it("rejects explicit chat edits against long-form role authority", async () => {
     const rolePath = join(root, "books", "demo-book", "story", "roles", "主要角色", "林月.md");
     await mkdir(join(root, "books", "demo-book", "story", "roles", "主要角色"), { recursive: true });
     await writeFile(rolePath, "# 林月\n\n- 动机：守住旧账册。\n", "utf-8");
@@ -3322,11 +3305,11 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(410);
     await expect(response.json()).resolves.toMatchObject({
-      response: expect.stringContaining("已直接编辑 books/demo-book/story/roles/主要角色/林月.md"),
+      error: { code: "RUNTIME_TYPED_DIFF_REQUIRED" },
     });
-    await expect(readFile(rolePath, "utf-8")).resolves.toContain("查清账册里的失踪名单");
+    await expect(readFile(rolePath, "utf-8")).resolves.toContain("守住旧账册");
     expect(runAgentSessionMock).not.toHaveBeenCalled();
   });
 
@@ -4393,7 +4376,7 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(pipelineConfigs.at(-1)).toMatchObject({ chapterReviewMode: "manual" });
   });
 
-  it("uses a book-level revisionGate override when revising a chapter", async () => {
+  it("does not use legacy revisionGate settings to bypass Runtime revision", async () => {
     await writeCompleteBookFixture(root, "demo-book", "Demo Book");
     const rawBookPath = join(root, "books", "demo-book", "book.json");
     const rawBook = JSON.parse(await readFile(rawBookPath, "utf-8"));
@@ -4411,11 +4394,11 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ mode: "spot-fix" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(pipelineConfigs.at(-1)).toMatchObject({ revisionGate: "always" });
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "RUNTIME_REVISION_REQUIRED" });
   });
 
-  it("defaults the revisionGate to strict when neither book nor project sets one", async () => {
+  it("requires Runtime revision even when no legacy revisionGate is configured", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
 
@@ -4425,8 +4408,8 @@ describe("createStudioServer daemon lifecycle", () => {
       body: JSON.stringify({ mode: "spot-fix" }),
     });
 
-    expect(response.status).toBe(200);
-    expect(pipelineConfigs.at(-1)).toMatchObject({ revisionGate: "strict" });
+    expect(response.status).toBe(410);
+    await expect(response.json()).resolves.toMatchObject({ error: "RUNTIME_REVISION_REQUIRED" });
   });
 
   it("exposes a global default model endpoint backed by llm.defaultModel", async () => {
@@ -4517,15 +4500,17 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(composeChapterMock).toHaveBeenCalledWith("demo-book", "use the plan");
 
     const repairRes = await app.request("http://localhost/api/v1/books/demo-book/repair-state/3", { method: "POST" });
-    await expect(repairRes.json()).resolves.toMatchObject({ chapterNumber: 3, status: "ready-for-review" });
-    expect(repairChapterStateMock).toHaveBeenCalledWith("demo-book", 3);
+    expect(repairRes.status).toBe(410);
+    await expect(repairRes.json()).resolves.toMatchObject({ error: "LEGACY_LONG_FORM_READ_ONLY" });
+    expect(repairChapterStateMock).not.toHaveBeenCalled();
 
     const reviseFoundationRes = await app.request("http://localhost/api/v1/books/demo-book/foundation/revise", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ feedback: "make the protagonist colder" }),
     });
-    await expect(reviseFoundationRes.json()).resolves.toMatchObject({ ok: true });
-    expect(reviseFoundationMock).toHaveBeenCalledWith("demo-book", "make the protagonist colder");
+    expect(reviseFoundationRes.status).toBe(410);
+    await expect(reviseFoundationRes.json()).resolves.toMatchObject({ error: "RUNTIME_TYPED_DIFF_REQUIRED" });
+    expect(reviseFoundationMock).not.toHaveBeenCalled();
   });
 
   it("spinoff/init validates input, 404s a missing parent, and otherwise runs initSpinoffBook", async () => {

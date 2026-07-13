@@ -1,21 +1,46 @@
 # Phase 8 implementation
 
 Date: 2026-07-13  
-Status: **not started — prerequisite gate failed**
+Status: implemented; Phase 9 not started
 
-The Phase 8 removal implementation did not run. The checked-in Phase 7 evidence covers deterministic synthetic fixtures only and explicitly reports that no real source project was used. The repository contains no actual legacy user project that can safely satisfy the missing acceptance run.
+## Authority contraction
 
-Per the Phase 8 requirement, no legacy authority writer, fallback, route, Agent capability, Dashboard, plugin runtime, configuration key, dependency or adapter was deleted or redirected. Phase 7's uncommitted working-tree changes and protected test-temporary directories were left untouched.
+- Deleted the legacy chapter persistence implementation and selection port.
+- Removed Writer chapter/Truth save methods and long-form `MemoryDB` synchronization.
+- Replaced legacy draft, revision, state repair, Markdown resync and chapter import entry points with fail-closed migration/Runtime guidance.
+- Removed automatic Markdown bootstrap from state loading and memory retrieval; structured state absence is explicit.
+- Deleted the bootstrap module itself; migration source parsing remains isolated in the explicit importer.
+- Removed long-form Agent Truth/chapter/import/generic file mutators from both registry and implementation.
+- Rewrote long-form Agent prompts and edit sessions so they can emit only typed proposals, review artifacts and Runtime command requests; path checks deny Runtime databases, authority roots and migration snapshots in code.
+- Removed deterministic interaction file writers; UI actions now fail closed instead of editing legacy files.
+- Removed legacy/shadow context provider, shadow diff, Runtime-unavailable fallback and dead Markdown context composer.
+- New books require Runtime authority; Runtime project creation is part of book initialization.
+- Fan-fiction and spinoff initialization use the same Runtime project chain while retaining source provenance.
+- Draft audit output is ephemeral proposal data; post-chapter hooks no longer promote a second authority write.
 
-Completed in this attempt:
+## Studio and Runtime command path
 
-- current-code removal inventory;
-- classification of every requested authority/fallback/non-long-form category;
-- explicit `unknown` no-delete list;
-- evidence requirements for reopening the deletion gate.
+Studio direct Truth/chapter/repair/resync/rewrite/review/import routes are HTTP 410 compatibility tombstones. User edits to characters, world, relationships, facts, timeline and threads use:
 
-See `phase-8-removal-audit.md`.
+`typed diff -> Runtime validation -> expected revision -> transaction -> event -> projection`
 
-Phase 8 may resume when a redacted actual-project migration evidence bundle proves dry-run, decisions, verified snapshot, import, independent replay verification, explicit cutover, post-cutover doctor/export, and rollback/restore. Resuming must begin by rerunning the audit against the then-current code; it must not rely on this file as proof that removal occurred.
+The new Runtime `/commands/typed-diff` contract carries request ID, idempotency key, project ID, schema version and expected revision, plus actor, reason and typed events. It rejects direct SQL/path capabilities, stale revisions and unsupported event/aggregate pairs; retries are idempotent.
 
-Phase 9 was not started.
+Studio's generic artifact writer is restricted to non-long-form output roots. Direct foundation controls were removed, chat file edits cannot target `books/**`, and no raw Runtime database download route exists.
+
+## Legacy exit and configuration
+
+- Old projects remain readable/exportable and can use the Phase 7 migration wizard.
+- Runtime status reports legacy/shadow as read-only with deprecation guidance.
+- Default configuration is `story-runtime` with fail-closed fallback.
+- `pnpm migrate:phase8-config -- <project>` creates a backup and reports every migration; old keys are never silently ignored.
+- The migrator accepts UTF-8 JSON with or without BOM, rewrites retired authority/fallback keys and preserves a timestamped backup.
+- CLI doctor/status/review/TUI no longer advertise `memory.db` or file-authority fallback semantics.
+
+## CI and cleanup
+
+Root CI runs architecture gates, Runtime dependency/compile/tests and InkOS install/typecheck/build/tests. The architecture script enforces ten authority rules plus duplicate Dashboard/plugin isolation, including Agent prompt/path capabilities.
+
+Knip and Vulture were run. Phase 8-relevant dead paths were removed. Unrelated UI/provider exports and dependencies reported by Knip were not deleted because dynamic reachability is unresolved and therefore classified `unknown`.
+
+Upstream history and licenses are retained. No Phase 9 work was performed.

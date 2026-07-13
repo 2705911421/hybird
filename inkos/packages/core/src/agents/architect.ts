@@ -112,15 +112,6 @@ export class ArchitectAgent extends BaseAgent {
     book: BookConfig,
     externalContext?: string,
     reviewFeedback?: string,
-    options?: {
-      reviseFrom?: {
-        storyBible: string;
-        volumeOutline: string;
-        bookRules: string;
-        characterMatrix: string;
-        userFeedback: string;
-      };
-    },
   ): Promise<ArchitectOutput> {
     const { profile: gp, body: genreBody } =
       await readGenreProfile(this.ctx.projectRoot, book.genre);
@@ -130,9 +121,6 @@ export class ArchitectAgent extends BaseAgent {
       ? `\n\n## 外部指令\n以下是来自外部系统的创作指令，请将其融入设定中：\n\n${externalContext}\n`
       : "";
     const reviewFeedbackBlock = this.buildReviewFeedbackBlock(reviewFeedback, resolvedLanguage);
-    const revisePrompt = options?.reviseFrom
-      ? this.buildRevisePrompt(options.reviseFrom)
-      : "";
 
     const numericalBlock = gp.numericalSystem
       ? "- 有明确的数值/资源体系可追踪\n- 在 book_rules 中写清核心资源、硬上限和不可突破规则"
@@ -152,48 +140,11 @@ export class ArchitectAgent extends BaseAgent {
       : `请为标题为"${book.title}"的${gp.name}小说生成完整基础设定。`;
 
     const response = await this.chat([
-      { role: "system", content: langPrefix + systemPrompt + revisePrompt },
+      { role: "system", content: langPrefix + systemPrompt },
       { role: "user", content: userMessage },
     ], { temperature: 0.8 });
 
     return this.parseSectionsWithRepair(response.content, resolvedLanguage);
-  }
-
-  private buildRevisePrompt(reviseFrom: {
-    storyBible: string;
-    volumeOutline: string;
-    bookRules: string;
-    characterMatrix: string;
-    userFeedback: string;
-  }): string {
-    return `\n\n## 既有架构稿修订模式
-你在把一本已有书的架构稿从条目式升级为当前的段落式架构稿 + 一人一卡角色目录；如果它已经是 Phase 5 结构，则按用户反馈二次重写。
-
-原书信息（这是权威内容，必须完整保留其中的世界观、角色、主线、伏笔和语气）：
-
-【story_bible / story_frame 全文】
-${reviseFrom.storyBible || "（无）"}
-
-【volume_outline / volume_map 全文】
-${reviseFrom.volumeOutline || "（无）"}
-
-【book_rules 全文】
-${reviseFrom.bookRules || "（无）"}
-
-【character_matrix / roles 全文】
-${reviseFrom.characterMatrix || "（无）"}
-
-你的任务：
-1. 把现有内容重新组织成当前 5 段 SECTION：story_frame / volume_map / roles / book_rules / pending_hooks
-2. story_frame 使用段落式世界观与核心冲突，不要退回条目表格
-3. volume_map 使用段落式卷/章级方向，并把节奏原则放进末段
-4. roles 必须按一人一卡输出，主要/次要角色判断沿用原内容，缺失才按主线重要性推断
-5. pending_hooks 必须保留原有未回收伏笔，不要因为重写架构稿而清空
-6. 不要改动已写章节的运行时事实，不要重置 current_state / pending_hooks 之外的运行时日志
-
-用户额外要求：
-${reviseFrom.userFeedback || "（无）"}
-`;
   }
 
   // -------------------------------------------------------------------------
@@ -736,7 +687,7 @@ You MUST emit all **5 SECTION blocks in order**: story_frame → volume_map → 
       bookRules: bookRules!,
       // currentState: empty string when architect no longer emits the section;
       // writeFoundationFiles seeds current_state.md with a placeholder so
-      // consolidator / state-bootstrap readers find a valid file on first boot.
+      // importer and read-only projection readers find a valid file on first boot.
       currentState: currentStateLegacy,
       pendingHooks,
       storyFrame: effectiveStoryFrame,

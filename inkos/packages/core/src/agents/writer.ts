@@ -37,7 +37,6 @@ import {
 } from "../utils/governed-working-set.js";
 import { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "../utils/pov-filter.js";
 import { parseCreativeOutput } from "./writer-parser.js";
-import { buildRuntimeStateArtifacts, saveRuntimeStateSnapshot, type RuntimeStateArtifacts } from "../state/runtime-state-store.js";
 import type { RuntimeStateSnapshot } from "../state/state-reducer.js";
 import { parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
 import { analyzeHookHealth } from "../utils/hook-health.js";
@@ -48,7 +47,7 @@ import {
   renderNarrativeSelectedContext,
   sanitizeNarrativeEvidenceBlock,
 } from "../utils/narrative-control.js";
-import { readFile, writeFile, mkdir, readdir, rm } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const LEGACY_WRITER_CONTEXT_BUDGET = {
@@ -359,21 +358,17 @@ export class WriterAgent extends BaseAgent {
     });
     const settlement = settleResult.settlement;
     const settleUsage = settleResult.usage;
-    const runtimeStateArtifacts = await this.buildRuntimeStateArtifactsIfPresent(
-      bookDir,
-      settlement.runtimeStateDelta,
-      resolvedLanguage,
-      chapterNumber,
-    );
-    const resolvedRuntimeStateDelta = runtimeStateArtifacts?.resolvedDelta ?? settlement.runtimeStateDelta;
+    const resolvedRuntimeStateDelta = settlement.runtimeStateDelta
+      ? this.normalizeRuntimeStateDeltaChapter(settlement.runtimeStateDelta, chapterNumber)
+      : undefined;
     const priorHookIds = new Set(parsePendingHooksMarkdown(hooks).map((hook) => hook.hookId));
     const hookHealthIssues = resolvedRuntimeStateDelta
-      && (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)
+      && settlement.runtimeStateSnapshot
       ? analyzeHookHealth({
           language: resolvedLanguage,
           chapterNumber,
           targetChapters: book.targetChapters,
-          hooks: (runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot)!.hooks.hooks,
+          hooks: settlement.runtimeStateSnapshot.hooks.hooks,
           delta: resolvedRuntimeStateDelta,
           existingHookIds: [...priorHookIds],
         })
@@ -435,14 +430,14 @@ export class WriterAgent extends BaseAgent {
       preWriteCheck: creative.preWriteCheck,
       postSettlement: settlement.postSettlement,
       runtimeStateDelta: resolvedRuntimeStateDelta,
-      runtimeStateSnapshot: runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot,
-      updatedState: runtimeStateArtifacts?.currentStateMarkdown ?? settlement.updatedState,
+      runtimeStateSnapshot: settlement.runtimeStateSnapshot,
+      updatedState: settlement.updatedState,
       updatedLedger: settlement.updatedLedger,
-      updatedHooks: runtimeStateArtifacts?.hooksMarkdown ?? settlement.updatedHooks,
+      updatedHooks: settlement.updatedHooks,
       chapterSummary: resolvedRuntimeStateDelta
         ? this.renderDeltaSummaryRow(resolvedRuntimeStateDelta)
         : settlement.chapterSummary,
-      updatedChapterSummaries: runtimeStateArtifacts?.chapterSummariesMarkdown,
+      updatedChapterSummaries: undefined,
       updatedSubplots: settlement.updatedSubplots,
       updatedEmotionalArcs: settlement.updatedEmotionalArcs,
       updatedCharacterMatrix: settlement.updatedCharacterMatrix,
@@ -511,13 +506,9 @@ export class WriterAgent extends BaseAgent {
       originalCharacterMatrix: characterMatrix,
     });
     const settlement = settleResult.settlement;
-    const runtimeStateArtifacts = await this.buildRuntimeStateArtifactsIfPresent(
-      input.bookDir,
-      settlement.runtimeStateDelta,
-      resolvedLanguage,
-      input.chapterNumber,
-      input.allowReapply,
-    );
+    const resolvedRuntimeStateDelta = settlement.runtimeStateDelta
+      ? this.normalizeRuntimeStateDeltaChapter(settlement.runtimeStateDelta, input.chapterNumber)
+      : undefined;
 
     return {
       chapterNumber: input.chapterNumber,
@@ -529,15 +520,15 @@ export class WriterAgent extends BaseAgent {
       ),
       preWriteCheck: "",
       postSettlement: settlement.postSettlement,
-      runtimeStateDelta: runtimeStateArtifacts?.resolvedDelta ?? settlement.runtimeStateDelta,
-      runtimeStateSnapshot: runtimeStateArtifacts?.snapshot ?? settlement.runtimeStateSnapshot,
-      updatedState: runtimeStateArtifacts?.currentStateMarkdown ?? settlement.updatedState,
+      runtimeStateDelta: resolvedRuntimeStateDelta,
+      runtimeStateSnapshot: settlement.runtimeStateSnapshot,
+      updatedState: settlement.updatedState,
       updatedLedger: settlement.updatedLedger,
-      updatedHooks: runtimeStateArtifacts?.hooksMarkdown ?? settlement.updatedHooks,
-      chapterSummary: settlement.runtimeStateDelta
-        ? this.renderDeltaSummaryRow(settlement.runtimeStateDelta)
+      updatedHooks: settlement.updatedHooks,
+      chapterSummary: resolvedRuntimeStateDelta
+        ? this.renderDeltaSummaryRow(resolvedRuntimeStateDelta)
         : settlement.chapterSummary,
-      updatedChapterSummaries: runtimeStateArtifacts?.chapterSummariesMarkdown,
+      updatedChapterSummaries: undefined,
       updatedSubplots: settlement.updatedSubplots,
       updatedEmotionalArcs: settlement.updatedEmotionalArcs,
       updatedCharacterMatrix: settlement.updatedCharacterMatrix,
@@ -687,64 +678,6 @@ export class WriterAgent extends BaseAgent {
       settlement: mergedSettlement,
       usage: response.usage,
     };
-  }
-
-  async saveChapter(
-    bookDir: string,
-    output: WriteChapterOutput,
-    numericalSystem: boolean = true,
-    language: "zh" | "en" = "zh",
-  ): Promise<void> {
-    const chaptersDir = join(bookDir, "chapters");
-    const storyDir = join(bookDir, "story");
-    await mkdir(chaptersDir, { recursive: true });
-
-    const paddedNum = String(output.chapterNumber).padStart(4, "0");
-    const filename = `${paddedNum}_${this.sanitizeFilename(output.title)}.md`;
-    const existingChapterFiles = await readdir(chaptersDir).catch(() => []);
-    await Promise.all(
-      existingChapterFiles
-        .filter((file) => file.startsWith(`${paddedNum}_`) && file.endsWith(".md") && file !== filename)
-        .map((file) => rm(join(chaptersDir, file), { force: true })),
-    );
-
-    const heading = language === "en"
-      ? `# Chapter ${output.chapterNumber}: ${output.title}`
-      : `# 第${output.chapterNumber}章 ${output.title}`;
-    const chapterContent = [
-      heading,
-      "",
-      output.content,
-    ].join("\n");
-    const runtimeStateArtifacts = await this.resolveRuntimeStateArtifactsForOutput(
-      bookDir,
-      output,
-      language,
-    );
-
-    const writes: Array<Promise<void>> = [
-      writeFile(join(chaptersDir, filename), chapterContent, "utf-8"),
-      writeFile(join(storyDir, "current_state.md"), runtimeStateArtifacts?.currentStateMarkdown ?? output.updatedState, "utf-8"),
-      writeFile(join(storyDir, "pending_hooks.md"), runtimeStateArtifacts?.hooksMarkdown ?? output.updatedHooks, "utf-8"),
-    ];
-
-    if (runtimeStateArtifacts?.chapterSummariesMarkdown) {
-      writes.push(
-        writeFile(join(storyDir, "chapter_summaries.md"), runtimeStateArtifacts.chapterSummariesMarkdown, "utf-8"),
-      );
-    }
-
-    if (runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot) {
-      writes.push(saveRuntimeStateSnapshot(bookDir, runtimeStateArtifacts?.snapshot ?? output.runtimeStateSnapshot!));
-    }
-
-    if (numericalSystem) {
-      writes.push(
-        writeFile(join(storyDir, "particle_ledger.md"), output.updatedLedger, "utf-8"),
-      );
-    }
-
-    await Promise.all(writes);
   }
 
   private buildUserPrompt(params: {
@@ -1126,44 +1059,6 @@ ${overrides}\n`;
     }
   }
 
-  /** Save new truth files (summaries, subplots, emotional arcs, character matrix). */
-  async saveNewTruthFiles(
-    bookDir: string,
-    output: WriteChapterOutput,
-    language: "zh" | "en" = "zh",
-  ): Promise<void> {
-    const storyDir = join(bookDir, "story");
-    const writes: Array<Promise<void>> = [];
-
-    // Append chapter summary to chapter_summaries.md
-    if (!output.runtimeStateDelta && output.updatedChapterSummaries) {
-      writes.push(writeFile(
-        join(storyDir, "chapter_summaries.md"),
-        output.updatedChapterSummaries,
-        "utf-8",
-      ));
-    } else if (!output.runtimeStateDelta && output.chapterSummary) {
-      writes.push(this.appendChapterSummary(storyDir, output.chapterSummary, language));
-    }
-
-    // Overwrite subplot board
-    if (output.updatedSubplots) {
-      writes.push(writeFile(join(storyDir, "subplot_board.md"), output.updatedSubplots, "utf-8"));
-    }
-
-    // Overwrite emotional arcs
-    if (output.updatedEmotionalArcs) {
-      writes.push(writeFile(join(storyDir, "emotional_arcs.md"), output.updatedEmotionalArcs, "utf-8"));
-    }
-
-    // Overwrite character matrix
-    if (output.updatedCharacterMatrix) {
-      writes.push(writeFile(join(storyDir, "character_matrix.md"), output.updatedCharacterMatrix, "utf-8"));
-    }
-
-    await Promise.all(writes);
-  }
-
   private renderDeltaSummaryRow(delta: RuntimeStateDelta): string {
     if (!delta.chapterSummary) return "";
     const summary = delta.chapterSummary;
@@ -1229,105 +1124,6 @@ ${overrides}\n`;
           }
         : undefined,
     };
-  }
-
-  private async buildRuntimeStateArtifactsIfPresent(
-    bookDir: string,
-    delta: RuntimeStateDelta | undefined,
-    language: "zh" | "en",
-    authoritativeChapterNumber?: number,
-    allowReapply?: boolean,
-  ): Promise<RuntimeStateArtifacts | null> {
-    if (!delta) return null;
-    const safeDelta = authoritativeChapterNumber === undefined
-      ? delta
-      : this.normalizeRuntimeStateDeltaChapter(delta, authoritativeChapterNumber);
-    return buildRuntimeStateArtifacts({
-      bookDir,
-      delta: safeDelta,
-      language,
-      allowReapply,
-    });
-  }
-
-  private async resolveRuntimeStateArtifactsForOutput(
-    bookDir: string,
-    output: WriteChapterOutput,
-    language: "zh" | "en",
-  ): Promise<RuntimeStateArtifacts | null> {
-    if (!output.runtimeStateDelta) return null;
-    const safeDelta = this.normalizeRuntimeStateDeltaChapter(
-      output.runtimeStateDelta,
-      output.chapterNumber,
-    );
-    if (
-      safeDelta === output.runtimeStateDelta
-      && output.runtimeStateSnapshot
-      && output.updatedChapterSummaries
-      && output.updatedState
-      && output.updatedHooks
-    ) {
-      return {
-        snapshot: output.runtimeStateSnapshot,
-        resolvedDelta: safeDelta,
-        currentStateMarkdown: output.updatedState,
-        hooksMarkdown: output.updatedHooks,
-        chapterSummariesMarkdown: output.updatedChapterSummaries,
-      };
-    }
-
-    return buildRuntimeStateArtifacts({
-      bookDir,
-      delta: safeDelta,
-      language,
-    });
-  }
-
-  private async appendChapterSummary(
-    storyDir: string,
-    summary: string,
-    language: "zh" | "en",
-  ): Promise<void> {
-    const summaryPath = join(storyDir, "chapter_summaries.md");
-    let existing = "";
-    try {
-      existing = await readFile(summaryPath, "utf-8");
-    } catch {
-      // File doesn't exist yet — start with header
-      existing = language === "en"
-        ? "# Chapter Summaries\n\n| Chapter | Title | Characters | Key Events | State Changes | Hook Activity | Mood | Chapter Type |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        : "# 章节摘要\n\n| 章节 | 标题 | 出场人物 | 关键事件 | 状态变化 | 伏笔动态 | 情绪基调 | 章节类型 |\n|------|------|----------|----------|----------|----------|----------|----------|\n";
-    }
-
-    // Extract only the data row(s) from the summary (skip header lines)
-    const dataRows = summary
-      .split("\n")
-      .filter((line) =>
-        line.startsWith("|")
-        && !line.startsWith("| 章节")
-        && !line.startsWith("| Chapter")
-        && !line.startsWith("|--")
-        && !line.startsWith("| ---"),
-      )
-      .join("\n");
-
-    if (dataRows) {
-      // Deduplicate: remove existing rows with the same chapter number before appending
-      const newChapterNums = new Set(
-        dataRows.split("\n")
-          .map((line) => line.split("|")[1]?.trim())
-          .filter((ch) => ch && /^\d+$/.test(ch)),
-      );
-      const deduped = existing
-        .split("\n")
-        .filter((line) => {
-          if (!line.startsWith("|")) return true;
-          const chNum = line.split("|")[1]?.trim();
-          return !chNum || !newChapterNums.has(chNum);
-        })
-        .join("\n");
-      await writeFile(summaryPath, `${deduped.trimEnd()}\n${dataRows}\n`, "utf-8");
-    }
   }
 
   private buildStyleFingerprint(styleProfileRaw: string): string | undefined {
@@ -1469,10 +1265,4 @@ ${overrides}\n`;
     return filteredRows.length > 0 ? filteredRows.join("\n") : "";
   }
 
-  private sanitizeFilename(title: string): string {
-    return title
-      .replace(/[/\\?%*:|"<>]/g, "")
-      .replace(/\s+/g, "_")
-      .slice(0, 50);
-  }
 }

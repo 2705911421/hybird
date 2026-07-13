@@ -97,7 +97,7 @@ export async function launchTui(
       const book = await state.loadBookConfig(session.activeBookId);
       if (book.authorityMode === "runtime") {
         const config = await loadProjectConfig(projectRoot);
-        if (config.storyRuntime.mode !== "legacy") {
+        if (config.storyRuntime.mode === "story-runtime") {
           const client = new RuntimeReviewClient({
             baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
             apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,

@@ -864,9 +864,8 @@ type ExternalChatEditResult = {
   readonly activeBookId?: string;
 };
 
-const CHAT_EDIT_WARNING = "[warning] Chat external edit requires review before continuation.";
 const CHAT_EDIT_TEXT_EXTENSIONS = /\.(md|txt|json|ya?ml)$/i;
-const CHAT_EDIT_ALLOWED_ROOTS = new Set(["books", "shorts", "covers", "genres"]);
+const CHAT_EDIT_ALLOWED_ROOTS = new Set(["shorts", "covers", "genres"]);
 
 function parseReplacementInstruction(instruction: string): { oldText: string; newText: string } | null {
   const inFileQuoted = instruction.match(/(?:里|里的|中|中的|里面)\s*[「“"]([\s\S]+?)[」”"]\s*(?:改成|替换成|换成)\s*[「“"]([\s\S]+?)[」”"]/);
@@ -896,27 +895,9 @@ function isExplicitExternalChatEditInstruction(instruction: string): boolean {
   return /^(?:第\s*\d{1,4}\s*章\s*)?(?:把|将)\s*/u.test(imperative);
 }
 
-function parseChapterNumberForEdit(instruction: string): number | null {
-  const match = instruction.match(/第\s*(\d{1,4})\s*章/);
-  if (!match?.[1]) return null;
-  const chapterNumber = Number.parseInt(match[1], 10);
-  return Number.isInteger(chapterNumber) && chapterNumber > 0 ? chapterNumber : null;
-}
-
 function parseExplicitEditPath(instruction: string): string | null {
   const match = instruction.match(/(?:把|将)\s+([^「“"\s，。；;]+?\.[A-Za-z0-9]+)\s*(?:里|里的|中|中的|里面)/);
   return match?.[1]?.trim() ?? null;
-}
-
-function countContentUnits(content: string): number {
-  const stripped = content
-    .replace(/^#{1,6}\s+.*$/gm, "")
-    .trim();
-  if (!stripped) return 0;
-  if (/[\u3400-\u9fff]/.test(stripped)) {
-    return stripped.replace(/\s/g, "").length;
-  }
-  return stripped.split(/\s+/).filter(Boolean).length;
 }
 
 function resolveExternalChatEditPath(root: string, requestedPath: string): { path: string; rel: string } {
@@ -930,6 +911,9 @@ function resolveExternalChatEditPath(root: string, requestedPath: string): { pat
     throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edit path escapes the project root.");
   }
   const first = rel.split("/")[0] ?? "";
+  if (first === "books") {
+    throw new ApiError(410, "RUNTIME_TYPED_DIFF_REQUIRED", "Long-form chapter and story edits must use Story Runtime typed commands.");
+  }
   if (!CHAT_EDIT_ALLOWED_ROOTS.has(first)) {
     throw new ApiError(400, "UNSUPPORTED_CHAT_EDIT_TARGET", "Chat external edits cannot modify source code, config, or arbitrary project files.");
   }
@@ -942,59 +926,8 @@ function resolveExternalChatEditPath(root: string, requestedPath: string): { pat
   return { path: resolved, rel };
 }
 
-async function findChapterFile(root: string, bookId: string, chapterNumber: number): Promise<string | null> {
-  const chaptersDir = join(root, "books", bookId, "chapters");
-  const padded = String(chapterNumber).padStart(4, "0");
-  const files = await readdir(chaptersDir).catch(() => []);
-  const match = files.find((file) => file.startsWith(`${padded}_`) && file.endsWith(".md"));
-  return match ? join(chaptersDir, match) : null;
-}
-
-function parseBookChapterFromRelativePath(rel: string): { bookId: string; chapterNumber: number } | null {
-  const match = rel.match(/^books\/([^/]+)\/chapters\/(\d{4})_[^/]+\.md$/);
-  if (!match?.[1] || !match[2]) return null;
-  const chapterNumber = Number.parseInt(match[2], 10);
-  return Number.isInteger(chapterNumber) ? { bookId: match[1], chapterNumber } : null;
-}
-
-async function syncExternalChapterEdit(params: {
-  readonly state: StateManager;
-  readonly root: string;
-  readonly bookId: string;
-  readonly chapterNumber: number;
-  readonly content: string;
-}): Promise<void> {
-  const now = new Date().toISOString();
-  const index = [...(await params.state.loadChapterIndex(params.bookId))];
-  const updated = index.map((chapter) => chapter.number === params.chapterNumber
-    ? {
-        ...chapter,
-        status: "audit-failed" as const,
-        wordCount: countContentUnits(params.content),
-        updatedAt: now,
-        auditIssues: [
-          ...chapter.auditIssues.filter((issue) => issue !== CHAT_EDIT_WARNING),
-          CHAT_EDIT_WARNING,
-        ],
-      }
-    : chapter);
-  if (updated.length > 0) {
-    await params.state.saveChapterIndex(params.bookId, updated);
-  }
-
-  const runtimeDir = join(params.root, "books", params.bookId, "story", "runtime");
-  const padded = String(params.chapterNumber).padStart(4, "0");
-  const runtimeFiles = await readdir(runtimeDir).catch(() => []);
-  await Promise.all(
-    runtimeFiles
-      .filter((file) => file.startsWith(`chapter-${padded}.`))
-      .map((file) => rm(join(runtimeDir, file), { force: true })),
-  );
-}
-
 async function tryHandleExternalChatEdit(params: {
   readonly root: string;
-  readonly state: StateManager;
   readonly instruction: string;
   readonly activeBookId: string | null;
 }): Promise<ExternalChatEditResult | null> {
@@ -1018,58 +951,16 @@ async function tryHandleExternalChatEdit(params: {
     const updated = content.slice(0, first) + replacement.newText + content.slice(first + replacement.oldText.length);
     await writeFile(target.path, updated, "utf-8");
 
-    const chapterTarget = parseBookChapterFromRelativePath(target.rel);
-    if (chapterTarget) {
-      await syncExternalChapterEdit({
-        state: params.state,
-        root: params.root,
-        bookId: chapterTarget.bookId,
-        chapterNumber: chapterTarget.chapterNumber,
-        content: updated,
-      });
-    }
-
     return {
-      activeBookId: chapterTarget?.bookId ?? params.activeBookId ?? undefined,
-      responseText: `已直接编辑 ${target.rel}${chapterTarget ? "，并标记为需要复核" : ""}。`,
+      activeBookId: params.activeBookId ?? undefined,
+      responseText: `已直接编辑 ${target.rel}。`,
     };
   }
 
-  if (!params.activeBookId) return null;
-  const chapterNumber = parseChapterNumberForEdit(params.instruction);
-  if (!replacement || !chapterNumber) return null;
-
-  const chapterPath = await findChapterFile(params.root, params.activeBookId, chapterNumber);
-  if (!chapterPath) {
-    throw new ApiError(404, "CHAPTER_NOT_FOUND", `Chapter ${chapterNumber} not found in ${params.activeBookId}`);
+  if (params.activeBookId) {
+    throw new ApiError(410, "RUNTIME_TYPED_DIFF_REQUIRED", "Long-form chapter edits must use Story Runtime revision commands.");
   }
-  if (!CHAT_EDIT_TEXT_EXTENSIONS.test(chapterPath)) {
-    throw new ApiError(400, "UNSUPPORTED_EDIT_TARGET", "Chat external edits only support text files.");
-  }
-
-  const content = await readFile(chapterPath, "utf-8");
-  const first = content.indexOf(replacement.oldText);
-  if (first === -1) {
-    throw new ApiError(400, "EDIT_TARGET_NOT_FOUND", "要替换的原文没有在目标章节中找到。");
-  }
-  if (content.indexOf(replacement.oldText, first + replacement.oldText.length) !== -1) {
-    throw new ApiError(400, "EDIT_TARGET_AMBIGUOUS", "要替换的原文出现多次，请给出更具体的一段。");
-  }
-
-  const updated = content.slice(0, first) + replacement.newText + content.slice(first + replacement.oldText.length);
-  await writeFile(chapterPath, updated, "utf-8");
-  await syncExternalChapterEdit({
-    state: params.state,
-    root: params.root,
-    bookId: params.activeBookId,
-    chapterNumber,
-    content: updated,
-  });
-
-  return {
-    activeBookId: params.activeBookId,
-    responseText: `已直接编辑 ${params.activeBookId} 第 ${chapterNumber} 章，并标记为需要复核。`,
-  };
+  return null;
 }
 
 function validateAgentActionExecution(args: {
@@ -2530,8 +2421,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   async function createRuntimeClient(): Promise<StoryRuntimeClient> {
     const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode === "legacy") {
-      throw new ApiError(404, "STORY_RUNTIME_DISABLED", "Story Runtime is disabled for this project.");
+    if (currentConfig.storyRuntime.mode !== "story-runtime") {
+      throw new ApiError(409, "LEGACY_LONG_FORM_READ_ONLY", "Legacy and shadow projects are read-only; run migration first.");
     }
     return new StoryRuntimeClient({
       baseUrl: currentConfig.storyRuntime.baseUrl,
@@ -2639,8 +2530,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/story-runtime/status", async (c) => {
     const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode === "legacy") {
-      return c.json({ mode: "legacy", enabled: false, health: null, featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
+    if (currentConfig.storyRuntime.mode !== "story-runtime") {
+      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: false, readOnly: true, health: null,
+        deprecation: "Legacy and shadow long-form modes are read-only. Run migration dry-run and cut over to Story Runtime.",
+        featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
     }
     try {
       const client = await createRuntimeClient();
@@ -2653,11 +2546,38 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/story-runtime/projects/:id/status", async (c) => {
     const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode === "legacy") return c.json({ error: "Story Runtime is disabled" }, 404);
+    if (currentConfig.storyRuntime.mode !== "story-runtime") return c.json({ error: "Legacy project is read-only; migrate to Story Runtime." }, 409);
     try {
       const client = await createRuntimeClient();
       return c.json(await client.projectStatus(c.req.param("id")));
     } catch (error) {
+      const mapped = runtimeProxyError(error);
+      return c.json(mapped.body, mapped.status);
+    }
+  });
+
+  app.post("/api/v1/story-runtime/projects/:id/typed-diff", async (c) => {
+    try {
+      const projectId = runtimeProjectId(c);
+      const body = await c.req.json<{
+        expectedRevision?: number; idempotencyKey?: string; actor?: string; reason?: string;
+        events?: Parameters<StoryRuntimeClient["applyTypedDiff"]>[0]["events"];
+      }>();
+      if (!Number.isInteger(body.expectedRevision) || (body.expectedRevision ?? -1) < 0) {
+        throw new ApiError(400, "EXPECTED_REVISION_REQUIRED", "expectedRevision must be a non-negative integer.");
+      }
+      if (!body.idempotencyKey || body.idempotencyKey.length < 16) {
+        throw new ApiError(400, "IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey must contain at least 16 characters.");
+      }
+      if (!body.actor?.trim() || !body.reason?.trim() || !body.events?.length) {
+        throw new ApiError(400, "TYPED_DIFF_INVALID", "actor, reason, and at least one typed event are required.");
+      }
+      return c.json(await (await createRuntimeClient()).applyTypedDiff({
+        projectId, idempotencyKey: body.idempotencyKey, expectedRevision: body.expectedRevision!,
+        actor: body.actor.trim(), reason: body.reason.trim(), events: body.events,
+      }));
+    } catch (error) {
+      if (error instanceof ApiError) return c.json({ error: { code: error.code, message: error.message } }, error.status as 400 | 401 | 403 | 404 | 409 | 422 | 500);
       const mapped = runtimeProxyError(error);
       return c.json(mapped.body, mapped.status);
     }
@@ -3022,7 +2942,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     try {
       if (await isRuntimeAuthority(id)) {
         const currentConfig = await loadCurrentProjectConfig();
-        if (currentConfig.storyRuntime.mode === "legacy") return c.json({ error: "Story Runtime is disabled" }, 503);
+        if (currentConfig.storyRuntime.mode !== "story-runtime") return c.json({ error: "Legacy project is read-only; run migration first." }, 409);
         const client = new StoryRuntimeClient({
           baseUrl: currentConfig.storyRuntime.baseUrl, timeoutMs: currentConfig.storyRuntime.timeoutMs,
           apiToken: currentConfig.storyRuntime.apiTokenEnv ? process.env[currentConfig.storyRuntime.apiTokenEnv] : undefined,
@@ -3044,27 +2964,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Chapter Save ---
 
   app.put("/api/v1/books/:id/chapters/:num", async (c) => {
-    const id = c.req.param("id");
-    const num = parseInt(c.req.param("num"), 10);
-    const bookDir = state.bookDir(id);
-    const chaptersDir = join(bookDir, "chapters");
-    const { content } = await c.req.json<{ content: string }>();
-    if (await isRuntimeAuthority(id)) {
-      return c.json({ error: "Runtime-authority chapters cannot be overwritten through the file API" }, 409);
-    }
-
-    try {
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(num).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const { writeFile: writeFileFs } = await import("node:fs/promises");
-      await writeFileFs(join(chaptersDir, match), content, "utf-8");
-      return c.json({ ok: true, chapterNumber: num });
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({
+      error: "LEGACY_LONG_FORM_READ_ONLY",
+      message: "Direct chapter PUT was removed in Phase 8. Use Runtime revision validation and commit, or migrate this project first.",
+      migration: "/api/v1/story-runtime/migration-jobs",
+    }, 410);
   });
 
   // --- Truth files ---
@@ -3075,8 +2979,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // Phase 5 cleanup #3 moved the authoritative YAML frontmatter + outline prose
   // into story/outline/ and character sheets into story/roles/. `story_bible.md`
   // and `book_rules.md` now exist only as compat pointer shims — we still allow
-  // reading them so legacy books keep rendering, but the server-side writer
-  // (write_truth_file) no longer accepts them as edit targets.
+  // reading them so legacy books keep rendering; long-form authority mutations
+  // are handled only through typed Runtime commands.
   const TRUTH_FLAT_FILES = [
     "author_intent.md", "current_focus.md",
     "story_bible.md", "book_rules.md", "volume_outline.md", "current_state.md",
@@ -3299,77 +3203,22 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.post("/api/v1/books/:id/repair-state/:chapter", async (c) => {
-    const id = c.req.param("id");
-    const chapterNum = parseInt(c.req.param("chapter"), 10);
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.repairChapterState(id, chapterNum);
-      broadcast("repair-state:complete", { bookId: id, chapter: chapterNum });
-      return c.json(result);
-    } catch (e) {
-      broadcast("repair-state:error", { bookId: id, chapter: chapterNum, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "LEGACY_LONG_FORM_READ_ONLY", message: "Use Story Runtime doctor/replay; file-state repair was removed in Phase 8." }, 410);
   });
 
   app.post("/api/v1/books/:id/foundation/revise", async (c) => {
-    const id = c.req.param("id");
-    const { feedback } = await c.req.json<{ feedback?: string }>().catch(() => ({ feedback: undefined }));
-    if (!feedback?.trim()) {
-      return c.json({ error: "feedback is required" }, 400);
-    }
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      await pipeline.reviseFoundation(id, feedback.trim());
-      broadcast("foundation:revised", { bookId: id });
-      return c.json({ ok: true });
-    } catch (e) {
-      broadcast("foundation:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({
+      error: "RUNTIME_TYPED_DIFF_REQUIRED",
+      message: "Foundation edits must be submitted as typed diffs to Story Runtime.",
+    }, 410);
   });
 
   app.post("/api/v1/books/:id/chapters/:num/approve", async (c) => {
-    const id = c.req.param("id");
-    const num = parseInt(c.req.param("num"), 10);
-    if (await isRuntimeAuthority(id)) return c.json({ error: "Runtime-authority review state is owned by Story Runtime" }, 409);
-
-    try {
-      const index = await state.loadChapterIndex(id);
-      const updated = index.map((ch) =>
-        ch.number === num ? { ...ch, status: "approved" as const } : ch,
-      );
-      await state.saveChapterIndex(id, updated);
-      return c.json({ ok: true, chapterNumber: num, status: "approved" });
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "RUNTIME_REVIEW_REQUIRED", message: "Review decisions are stored only by Story Runtime." }, 410);
   });
 
   app.post("/api/v1/books/:id/chapters/:num/reject", async (c) => {
-    const id = c.req.param("id");
-    const num = parseInt(c.req.param("num"), 10);
-    if (await isRuntimeAuthority(id)) return c.json({ error: "Runtime-authority review state is owned by Story Runtime" }, 409);
-
-    try {
-      const index = await state.loadChapterIndex(id);
-      const target = index.find((ch) => ch.number === num);
-      if (!target) {
-        return c.json({ error: `Chapter ${num} not found` }, 404);
-      }
-
-      const rollbackTarget = num - 1;
-      const discarded = await state.rollbackToChapter(id, rollbackTarget);
-      return c.json({
-        ok: true,
-        chapterNumber: num,
-        status: "rejected",
-        rolledBackTo: rollbackTarget,
-        discarded,
-      });
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "RUNTIME_REVIEW_REQUIRED", message: "Review decisions are stored only by Story Runtime." }, 410);
   });
 
   // --- SSE ---
@@ -4569,7 +4418,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
       const externalEdit = requestedIntent === "edit_artifact" || sessionKind === "edit"
         ? await tryHandleExternalChatEdit({
             root,
-            state,
             instruction,
             activeBookId: agentBookId,
           })
@@ -5289,38 +5137,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Revise ---
 
   app.post("/api/v1/books/:id/revise/:chapter", async (c) => {
-    const id = c.req.param("id");
-    const chapterNum = parseInt(c.req.param("chapter"), 10);
-    const bookDir = state.bookDir(id);
-    const body = await c.req
-      .json<{ mode?: string; brief?: string }>()
-      .catch(() => ({ mode: "spot-fix", brief: undefined }));
-
-    broadcast("revise:start", { bookId: id, chapter: chapterNum });
-    try {
-      const book = await state.loadBookConfig(id);
-      const chaptersDir = join(bookDir, "chapters");
-      const files = await readdir(chaptersDir);
-      const paddedNum = String(chapterNum).padStart(4, "0");
-      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
-      if (!match) return c.json({ error: "Chapter not found" }, 404);
-
-      const pipeline = new PipelineRunner(await buildPipelineConfig({
-        externalContext: body.brief,
-        bookIdForSettings: id,
-      }));
-      const normalizedMode = body.mode ?? "spot-fix";
-      const result = await pipeline.reviseDraft(
-        id,
-        chapterNum,
-        normalizedMode as "polish" | "rewrite" | "rework" | "spot-fix" | "anti-detect",
-      );
-      broadcast("revise:complete", { bookId: id, chapter: chapterNum });
-      return c.json(result);
-    } catch (e) {
-      broadcast("revise:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({
+      error: "RUNTIME_REVISION_REQUIRED",
+      message: "Use typed Runtime revision validation, re-audit, and commit.",
+    }, 410);
   });
 
   // --- Export ---
@@ -5600,37 +5420,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Truth file edit ---
 
   app.put("/api/v1/books/:id/truth/:file{.+}", async (c) => {
-    const id = c.req.param("id");
-    const file = c.req.param("file");
-    if (await isRuntimeAuthority(id)) {
-      return c.json({ error: "Runtime-authority Truth is read-only; submit a typed Runtime commit" }, 409);
-    }
-    const bookDir = state.bookDir(id);
-    const resolved = resolveTruthFilePath(bookDir, file);
-    if (!resolved) {
-      return c.json({ error: "Invalid truth file" }, 400);
-    }
-    // Legacy pointer shims are read-only in new-layout books: writing
-    // story_bible.md or book_rules.md does nothing at runtime (the pipeline
-    // reads outline/ instead). For pre-Phase-5 books these ARE authoritative.
-    if (LEGACY_SHIM_FILES.has(file)) {
-      const { isNewLayoutBook } = await import("@actalk/inkos-core");
-      if (await isNewLayoutBook(bookDir)) {
-        return c.json(
-          { error: "Legacy compat shim; edit outline/story_frame.md instead" },
-          400,
-        );
-      }
-    }
-    if (RUNTIME_DIAGNOSTIC_FILE_RE.test(file)) {
-      return c.json({ error: "Runtime diagnostic files are read-only" }, 400);
-    }
-    const { content } = await c.req.json<{ content: string }>();
-    const { writeFile: writeFileFs, mkdir: mkdirFs } = await import("node:fs/promises");
-    const { dirname: dirnameFs } = await import("node:path");
-    await mkdirFs(dirnameFs(resolved), { recursive: true });
-    await writeFileFs(resolved, content, "utf-8");
-    return c.json({ ok: true });
+    return c.json({
+      error: "TRUTH_PUT_REMOVED",
+      message: "Markdown is a read-only projection. Submit a typed diff command with expected_revision to Story Runtime.",
+    }, 410);
   });
 
   // =============================================
@@ -5682,46 +5475,11 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Write Rewrite (specific chapter) ---
 
   app.post("/api/v1/books/:id/rewrite/:chapter", async (c) => {
-    const id = c.req.param("id");
-    const chapterNum = parseInt(c.req.param("chapter"), 10);
-    const body: { brief?: string } = await c.req
-      .json<{ brief?: string }>()
-      .catch(() => ({}));
-
-    broadcast("rewrite:start", { bookId: id, chapter: chapterNum });
-    try {
-      const rollbackTarget = chapterNum - 1;
-      const discarded = await state.rollbackToChapter(id, rollbackTarget);
-      const pipeline = new PipelineRunner(await buildPipelineConfig({
-        externalContext: body.brief,
-      }));
-      pipeline.writeNextChapter(id).then(
-        (result) => broadcast("rewrite:complete", { bookId: id, chapterNumber: result.chapterNumber, title: result.title, wordCount: result.wordCount }),
-        (e) => broadcast("rewrite:error", { bookId: id, error: e instanceof Error ? e.message : String(e) }),
-      );
-      return c.json({ status: "rewriting", bookId: id, chapter: chapterNum, rolledBackTo: rollbackTarget, discarded });
-    } catch (e) {
-      broadcast("rewrite:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "RUNTIME_REVISION_REQUIRED", message: "Use typed Runtime revision validation, re-audit, and commit." }, 410);
   });
 
   app.post("/api/v1/books/:id/resync/:chapter", async (c) => {
-    const id = c.req.param("id");
-    const chapterNum = parseInt(c.req.param("chapter"), 10);
-    const body: { brief?: string } = await c.req
-      .json<{ brief?: string }>()
-      .catch(() => ({}));
-
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig({
-        externalContext: body.brief,
-      }));
-      const result = await pipeline.resyncChapterArtifacts(id, chapterNum);
-      return c.json(result);
-    } catch (e) {
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "RUNTIME_REPLAY_REQUIRED", message: "Use Story Runtime projection replay; Markdown resync was removed." }, 410);
   });
 
   // --- Detect All chapters ---
@@ -5900,42 +5658,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   // --- Import Chapters ---
 
   app.post("/api/v1/books/:id/import/chapters", async (c) => {
-    const id = c.req.param("id");
-    const { text, splitRegex } = await c.req.json<{ text: string; splitRegex?: string }>();
-    if (!text?.trim()) return c.json({ error: "text is required" }, 400);
-
-    broadcast("import:start", { bookId: id, type: "chapters" });
-    try {
-      const { splitChapters } = await import("@actalk/inkos-core");
-      const chapters = [...splitChapters(text, splitRegex)];
-
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      const result = await pipeline.importChapters({ bookId: id, chapters });
-      broadcast("import:complete", { bookId: id, type: "chapters", count: result.importedCount });
-      return c.json(result);
-    } catch (e) {
-      broadcast("import:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "MIGRATION_IMPORT_REQUIRED", message: "Use the versioned Runtime migration job and dry-run workflow." }, 410);
   });
 
   // --- Import Canon ---
 
   app.post("/api/v1/books/:id/import/canon", async (c) => {
-    const id = c.req.param("id");
-    const { fromBookId } = await c.req.json<{ fromBookId: string }>();
-    if (!fromBookId) return c.json({ error: "fromBookId is required" }, 400);
-
-    broadcast("import:start", { bookId: id, type: "canon" });
-    try {
-      const pipeline = new PipelineRunner(await buildPipelineConfig());
-      await pipeline.importCanon(id, fromBookId);
-      broadcast("import:complete", { bookId: id, type: "canon" });
-      return c.json({ ok: true });
-    } catch (e) {
-      broadcast("import:error", { bookId: id, error: String(e) });
-      return c.json({ error: String(e) }, 500);
-    }
+    return c.json({ error: "MIGRATION_IMPORT_REQUIRED", message: "Use the versioned Runtime migration job; direct canon import was removed." }, 410);
   });
 
   // --- Fanfic Init ---

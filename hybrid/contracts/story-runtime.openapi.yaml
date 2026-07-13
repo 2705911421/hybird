@@ -479,6 +479,25 @@ paths:
         "409": { $ref: "#/components/responses/RevisionConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
 
+  /commands/typed-diff:
+    post:
+      tags: [Events]
+      operationId: applyTypedDiff
+      description: Validates a user-authored domain diff and atomically appends events and rebuilds projections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ./schemas/typed-diff-command-request.json
+      responses:
+        "200":
+          description: Typed diff committed through the Runtime authority chain
+          content: { application/json: { schema: { $ref: ./schemas/append-events-response.json } } }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/RevisionConflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+
   /projections/replay:
     post:
       tags: [Operations]

@@ -8,7 +8,7 @@ import { inferLanguage } from "../utils/language.js";
 import { mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { StateManager } from "../state/manager.js";
-import { assertSafeTruthFileName, createInteractionToolsFromDeps } from "../interaction/project-tools.js";
+import { createInteractionToolsFromDeps } from "../interaction/project-tools.js";
 import { writeExportArtifact } from "../interaction/export-artifact.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
@@ -19,7 +19,6 @@ import { createTranslationProjectFromFile } from "../translation/index.js";
 import { runResearchReport } from "../agents/researcher.js";
 import { ingestMaterial } from "../materials/ingest.js";
 import { retrieveMaterials } from "../materials/retrieve.js";
-import { loadChaptersFromPath } from "./chapter-import-source.js";
 import type { ScriptTargetFormat } from "../agents/script-storyboard.js";
 import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayOpeningSeedResult, type PlayReplayResult, type PlayStepResult, type PlayVariantRestoreResult } from "../play/play-runner.js";
@@ -682,21 +681,10 @@ export function createSubAgentTool(
           case "architect": {
             const createBookPayload = options.actionPayload?.createBook;
             if (revise) {
-              if (!activeBookId) {
-                return textResult("Open the book first before revising its foundation.");
-              }
-              const targetBookId = resolveToolBookId("architect", bookId, activeBookId);
-              progress(`Revising foundation for "${targetBookId}"...`);
-              await runPipelineWithAbortSignal(
-                pipeline,
-                _signal,
-                () => pipeline.reviseFoundation(targetBookId, feedback ?? instruction),
-              );
-              progress(`Foundation revised for "${targetBookId}".`);
               return textResult(
                 sessionIsZh
-                  ? `Book "${targetBookId}" 架构稿已按要求重写。原书的条目式架构稿已备份到 story/.backup-phase4-<时间戳>/。`
-                  : `Book "${targetBookId}" foundation has been rewritten as requested. The previous itemized foundation was backed up to story/.backup-phase4-<timestamp>/.`,
+                  ? "错误：Phase 8 已移除 Agent 基础设定直写。请生成 typed diff proposal，并由 Studio/CLI 请求 Runtime command。"
+                  : "Error: Phase 8 removed direct Agent foundation writes. Produce a typed diff proposal and have Studio/CLI request a Runtime command.",
               );
             }
             const confirmedTitle = createBookPayload?.title?.trim();
@@ -723,6 +711,7 @@ export function createSubAgentTool(
                   platform: normalizePlatformOrOther(createBookPayload?.platform ?? platform),
                   language: resolvedLanguage as any,
                   status: "outlining" as any,
+                  authorityMode: "runtime",
                   targetChapters: createBookPayload?.targetChapters ?? targetChapters ?? 200,
                   chapterWordCount: createBookPayload?.chapterWordCount ?? chapterWordCount ?? defaultChapterLength(resolvedLanguage),
                   createdAt: now,
@@ -1131,104 +1120,6 @@ export function createRetrieveMaterialTool(projectRoot: string): AgentTool<typeo
           query: params.query,
           purpose: params.purpose,
           results,
-        },
-      );
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// 5. Chapter Import Tool (import_chapters)
-// ---------------------------------------------------------------------------
-
-const ImportChaptersParams = Type.Object({
-  bookId: Type.Optional(Type.String({
-    description: "Target book ID to import into. In active-book sessions, omit it to use the current active book; if provided, it must match the active book. In general chat there is no active book, so it is required and must be an existing book.",
-  })),
-  sourcePath: Type.String({
-    description: "Local path of the chapter source: either the stored_path from the Uploaded Files block (project-relative, e.g. .inkos/uploads/<session>/novel.txt) or an absolute path on this machine that the user provided. A directory imports each .md/.txt file as one chapter in filename order; a single file is split into chapters automatically by heading lines.",
-  }),
-  splitPattern: Type.Optional(Type.String({
-    description: "Single-file mode only: custom JavaScript regex source matching chapter heading lines. Omit to use the default pattern, which matches \"第X章/第X回\" and \"Chapter N\" headings.",
-  })),
-  resumeFrom: Type.Optional(Type.Number({
-    description: "Resume an interrupted import from chapter N (1-based). Required when the book already has chapters: replay starts at chapter N and earlier chapters are kept. Omit for a fresh import into an empty book.",
-  })),
-  importMode: Type.Optional(Type.Union([
-    Type.Literal("continuation"),
-    Type.Literal("series"),
-  ], {
-    description: "continuation (default): the book picks up exactly where the imported text left off, no new spacetime. series: shared universe but an independent new story, so a new spacetime is generated.",
-  })),
-});
-
-type ImportChaptersParamsType = Static<typeof ImportChaptersParams>;
-
-export function createImportChaptersTool(
-  pipeline: PipelineRunner,
-  activeBookId: string | null,
-  projectRoot: string,
-): AgentTool<typeof ImportChaptersParams> {
-  return {
-    name: "import_chapters",
-    description:
-      "Import an existing novel's chapters from a local file or directory into an InkOS book as real chapters (not reference material). " +
-      "InkOS reverse-engineers foundation/truth files from the imported text and replays every chapter to rebuild story state, so the book can be continued afterwards. " +
-      "Use ingest_material instead when the user only wants to archive reference material without touching book chapters.",
-    label: "Import Chapters",
-    parameters: ImportChaptersParams,
-    async execute(
-      _toolCallId: string,
-      params: ImportChaptersParamsType,
-      _signal?: AbortSignal,
-      onUpdate?: AgentToolUpdateCallback,
-    ): Promise<AgentToolResult<unknown>> {
-      const targetBookId = resolveToolBookId("import_chapters", params.bookId, activeBookId);
-
-      const state = new StateManager(projectRoot);
-      const existingChapterCount = (await state.getNextChapterNumber(targetBookId)) - 1;
-      if (existingChapterCount > 0 && params.resumeFrom === undefined) {
-        throw new Error(
-          `Book "${targetBookId}" already has ${existingChapterCount} chapter(s). ` +
-          `Pass resumeFrom=<n> to resume/append from chapter n, or ask the user to clear the existing chapters first.`,
-        );
-      }
-
-      const resolvedSourcePath = isAbsolute(params.sourcePath)
-        ? params.sourcePath
-        : resolve(projectRoot, params.sourcePath);
-      onUpdate?.(textResult(`Reading chapters from ${resolvedSourcePath}...`));
-      const chapters = await loadChaptersFromPath(resolvedSourcePath, params.splitPattern);
-
-      onUpdate?.(textResult(`Found ${chapters.length} chapter(s); importing into "${targetBookId}"...`));
-      const result = await runPipelineWithAbortSignal(
-        pipeline,
-        _signal,
-        () => pipeline.importChapters({
-          bookId: targetBookId,
-          chapters,
-          resumeFrom: params.resumeFrom,
-          importMode: params.importMode,
-        }),
-      );
-
-      const regeneratedFoundation = (params.resumeFrom ?? 1) === 1;
-      return textResult(
-        [
-          `Imported ${result.importedCount} chapter(s) into book "${result.bookId}".`,
-          `Total imported length: ${result.totalWords}. Next chapter to write: ${result.nextChapter}.`,
-          regeneratedFoundation
-            ? "Foundation and truth files were reverse-engineered from the imported text; chapter files and the chapter index were rebuilt by sequential replay."
-            : `Resumed replay from chapter ${params.resumeFrom}; earlier chapters and the existing foundation were kept.`,
-          `The book can now be continued with sub_agent(agent="writer") in the book session.`,
-        ].join("\n"),
-        {
-          kind: "chapters_imported",
-          bookId: result.bookId,
-          importedCount: result.importedCount,
-          totalWords: result.totalWords,
-          nextChapter: result.nextChapter,
-          importMode: params.importMode ?? "continuation",
         },
       );
     },
@@ -2484,136 +2375,6 @@ function playEditEntityId(type: string, label: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Deterministic writing tools
-// ---------------------------------------------------------------------------
-
-const WriteTruthFileParams = Type.Object({
-  bookId: Type.Optional(Type.String({ description: "Book ID. Omit to use the active book." })),
-  fileName: Type.String({ description: "Truth file path under story/. Prefer outline/story_frame.md, outline/volume_map.md, roles/major/<name>.md, roles/minor/<name>.md; flat files such as current_focus.md and author_intent.md are also supported." }),
-  content: Type.String({ description: "Full replacement content for the truth file." }),
-});
-
-export function createWriteTruthFileTool(
-  pipeline: PipelineRunner,
-  projectRoot: string,
-  activeBookId: string | null,
-): AgentTool<typeof WriteTruthFileParams> {
-  const tools = createDeterministicInteractionTools(pipeline, projectRoot);
-  return {
-    name: "write_truth_file",
-    description: "Replace a truth/control file under story/ using deterministic project tools.",
-    label: "Write Truth File",
-    parameters: WriteTruthFileParams,
-    async execute(_toolCallId, params): Promise<AgentToolResult<undefined>> {
-      try {
-        const bookId = resolveToolBookId("write_truth_file", params.bookId, activeBookId);
-        const fileName = assertSafeTruthFileName(params.fileName);
-        await tools.writeTruthFile(bookId, fileName, params.content);
-        return textResult(`Updated "${fileName}" for "${bookId}".`);
-      } catch (err: any) {
-        return textResult(`write_truth_file failed: ${err?.message ?? String(err)}`);
-      }
-    },
-  };
-}
-
-const RenameEntityParams = Type.Object({
-  bookId: Type.Optional(Type.String({ description: "Book ID. Omit to use the active book." })),
-  oldValue: Type.String({ description: "Current entity name." }),
-  newValue: Type.String({ description: "New entity name." }),
-});
-
-export function createRenameEntityTool(
-  pipeline: PipelineRunner,
-  projectRoot: string,
-  activeBookId: string | null,
-): AgentTool<typeof RenameEntityParams> {
-  const tools = createDeterministicInteractionTools(pipeline, projectRoot);
-  return {
-    name: "rename_entity",
-    description: "Rename an entity across truth files and chapters using deterministic edit control.",
-    label: "Rename Entity",
-    parameters: RenameEntityParams,
-    async execute(_toolCallId, params): Promise<AgentToolResult<undefined>> {
-      const bookId = resolveToolBookId("rename_entity", params.bookId, activeBookId);
-      const result = await tools.renameEntity(bookId, params.oldValue, params.newValue) as {
-        readonly __interaction?: { readonly responseText?: string };
-      };
-      const summary = result.__interaction?.responseText ?? `Renamed "${params.oldValue}" to "${params.newValue}" in "${bookId}".`;
-      return textResult(summary);
-    },
-  };
-}
-
-const PatchChapterTextParams = Type.Object({
-  bookId: Type.Optional(Type.String({ description: "Book ID. Omit to use the active book." })),
-  chapterNumber: Type.Number({ description: "Chapter number to patch." }),
-  targetText: Type.String({ description: "Exact text to replace." }),
-  replacementText: Type.String({ description: "Replacement text." }),
-});
-
-export function createPatchChapterTextTool(
-  pipeline: PipelineRunner,
-  projectRoot: string,
-  activeBookId: string | null,
-): AgentTool<typeof PatchChapterTextParams> {
-  const tools = createDeterministicInteractionTools(pipeline, projectRoot);
-  return {
-    name: "patch_chapter_text",
-    description: "Apply a deterministic local text patch to a chapter and mark it for review.",
-    label: "Patch Chapter",
-    parameters: PatchChapterTextParams,
-    async execute(_toolCallId, params): Promise<AgentToolResult<undefined>> {
-      const bookId = resolveToolBookId("patch_chapter_text", params.bookId, activeBookId);
-      const result = await tools.patchChapterText(
-        bookId,
-        params.chapterNumber,
-        params.targetText,
-        params.replacementText,
-      ) as {
-        readonly __interaction?: { readonly responseText?: string };
-      };
-      const summary = result.__interaction?.responseText ?? `Patched chapter ${params.chapterNumber} for "${bookId}".`;
-      return textResult(summary);
-    },
-  };
-}
-
-const ReplaceChapterTextParams = Type.Object({
-  bookId: Type.Optional(Type.String({ description: "Book ID. Omit to use the active book." })),
-  chapterNumber: Type.Number({ description: "Chapter number to replace." }),
-  fullText: Type.String({ description: "The complete replacement chapter markdown/text supplied by the user." }),
-});
-
-export function createReplaceChapterTextTool(
-  pipeline: PipelineRunner,
-  projectRoot: string,
-  activeBookId: string | null,
-): AgentTool<typeof ReplaceChapterTextParams> {
-  const tools = createDeterministicInteractionTools(pipeline, projectRoot);
-  return {
-    name: "replace_chapter_text",
-    description:
-      "Replace a whole existing chapter with user-supplied full chapter text and mark it for review. " +
-      "Use only when the user provides the complete replacement chapter; for model-generated rewrites use sub_agent reviser.",
-    label: "Replace Chapter",
-    parameters: ReplaceChapterTextParams,
-    async execute(_toolCallId, params): Promise<AgentToolResult<undefined>> {
-      const bookId = resolveToolBookId("replace_chapter_text", params.bookId, activeBookId);
-      const result = await tools.replaceChapterText(
-        bookId,
-        params.chapterNumber,
-        params.fullText,
-      ) as {
-        readonly __interaction?: { readonly responseText?: string };
-      };
-      const summary = result.__interaction?.responseText ?? `Replaced chapter ${params.chapterNumber} for "${bookId}".`;
-      return textResult(summary);
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
 // 3. Read Tool
 // ---------------------------------------------------------------------------
 
@@ -2626,10 +2387,16 @@ export interface ReadToolOptions {
 }
 
 function resolveReadPath(booksRoot: string, requestedPath: string, options: ReadToolOptions): string {
-  if (options.allowSystemPaths && isAbsolute(requestedPath)) {
-    return resolve(requestedPath);
+  const resolved = options.allowSystemPaths && isAbsolute(requestedPath)
+    ? resolve(requestedPath)
+    : safeBooksPath(booksRoot, requestedPath);
+  const normalized = resolved.replace(/\\/g, "/").toLowerCase();
+  if (/\.(?:db|sqlite|db-wal|db-shm)$/.test(normalized)
+      || normalized.includes("/story-runtime/data/")
+      || normalized.includes("/migration-snapshots/")) {
+    throw new Error("AUTHORITY_PATH_FORBIDDEN: agents cannot read Runtime databases or migration snapshots directly.");
   }
-  return safeBooksPath(booksRoot, requestedPath);
+  return resolved;
 }
 
 export function createReadTool(
@@ -2656,101 +2423,6 @@ export function createReadTool(
         return textResult(content);
       } catch (err: any) {
         return textResult(`Failed to read "${params.path}": ${err?.message ?? String(err)}`);
-      }
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// 3. Edit Tool
-// ---------------------------------------------------------------------------
-
-const EditParams = Type.Object({
-  path: Type.String({ description: "File path relative to books/" }),
-  old_string: Type.String({ description: "Exact string to find in the file" }),
-  new_string: Type.String({ description: "Replacement string" }),
-});
-
-export function createEditTool(projectRoot: string): AgentTool<typeof EditParams> {
-  const booksRoot = join(projectRoot, "books");
-  const state = new StateManager(projectRoot);
-
-  return {
-    name: "edit",
-    description:
-      "Edit a file under books/ via exact string replacement. " +
-      "old_string must appear exactly once in the file. " +
-      "For chapter text use patch_chapter_text; for canonical truth files (outline/story_frame.md, outline/volume_map.md, roles/**/*.md, current_focus.md, author_intent.md) prefer write_truth_file; " +
-      "to rewrite or polish a whole chapter call sub_agent with agent=\"reviser\".",
-    label: "Edit File",
-    parameters: EditParams,
-    async execute(
-      _toolCallId: string,
-      params: Static<typeof EditParams>,
-    ): Promise<AgentToolResult<undefined>> {
-      try {
-        const bookId = params.path.replace(/\\/g, "/").split("/")[0];
-        if (bookId && (await state.loadBookConfig(bookId).catch(() => undefined))?.authorityMode === "runtime") {
-          throw new Error("Generic file editing is disabled for Runtime-authority books.");
-        }
-        const filePath = safeBooksPath(booksRoot, params.path);
-        const content = await readFile(filePath, "utf-8");
-        const idx = content.indexOf(params.old_string);
-        if (idx === -1) {
-          return textResult(`old_string not found in "${params.path}".`);
-        }
-        if (content.indexOf(params.old_string, idx + 1) !== -1) {
-          return textResult(`old_string appears more than once in "${params.path}". Provide a more specific match.`);
-        }
-        const updated = content.slice(0, idx) + params.new_string + content.slice(idx + params.old_string.length);
-        await writeFile(filePath, updated, "utf-8");
-        return textResult(`File "${params.path}" updated successfully.`);
-      } catch (err: any) {
-        return textResult(`Failed to edit "${params.path}": ${err?.message ?? String(err)}`);
-      }
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// 4. Write Tool
-// ---------------------------------------------------------------------------
-
-const WriteFileParams = Type.Object({
-  path: Type.String({ description: "File path relative to books/" }),
-  content: Type.String({ description: "Full file content to write" }),
-});
-
-export function createWriteFileTool(projectRoot: string): AgentTool<typeof WriteFileParams> {
-  const booksRoot = join(projectRoot, "books");
-  const state = new StateManager(projectRoot);
-
-  return {
-    name: "write",
-    description:
-      "Create a new file, or fully replace an existing file's content under books/. " +
-      "Parent directories are created automatically. Existing content is overwritten silently — " +
-      "for canonical truth files prefer write_truth_file; " +
-      "for whole-chapter rewrites/polishing call sub_agent with agent=\"reviser\".",
-    label: "Write File",
-    parameters: WriteFileParams,
-    async execute(
-      _toolCallId: string,
-      params: Static<typeof WriteFileParams>,
-    ): Promise<AgentToolResult<undefined>> {
-      try {
-        const bookId = params.path.replace(/\\/g, "/").split("/")[0];
-        if (bookId && (await state.loadBookConfig(bookId).catch(() => undefined))?.authorityMode === "runtime") {
-          throw new Error("Generic file writing is disabled for Runtime-authority books.");
-        }
-        const filePath = safeBooksPath(booksRoot, params.path);
-        const parentDir = resolve(filePath, "..");
-        const { mkdir } = await import("node:fs/promises");
-        await mkdir(parentDir, { recursive: true });
-        await writeFile(filePath, params.content, "utf-8");
-        return textResult(`File "${params.path}" written successfully.`);
-      } catch (err: any) {
-        return textResult(`Failed to write "${params.path}": ${err?.message ?? String(err)}`);
       }
     },
   };

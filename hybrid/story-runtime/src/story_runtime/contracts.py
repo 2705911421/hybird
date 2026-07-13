@@ -428,6 +428,12 @@ class AppendEventsRequest(CommonWriteContext):
     admin_scope: Literal["story-runtime.events.append"] | None = None
 
 
+class TypedDiffCommandRequest(CommonWriteContext):
+    actor: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+    events: list[StoryEventInput] = Field(min_length=1, max_length=100)
+
+
 class ReplayProjectionsRequest(CommonWriteContext):
     projection_names: list[str] = Field(min_length=1)
     from_event_sequence: int = Field(ge=0)

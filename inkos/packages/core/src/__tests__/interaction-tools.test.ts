@@ -79,7 +79,7 @@ describe("interaction tools", () => {
     expect(events).toEqual([]);
   });
 
-  it("takes the book lock before deterministic text edit transactions", async () => {
+  it("rejects retired deterministic text edit transactions before taking a lock", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-core-interaction-lock-"));
     try {
       await mkdir(join(root, "books", "harbor", "story"), { recursive: true });
@@ -118,12 +118,10 @@ describe("interaction tools", () => {
       };
       const tools = createInteractionToolsFromDeps(pipeline as never, state as never);
 
-      await tools.renameEntity("harbor", "Alpha", "Beta");
-      await tools.patchChapterText("harbor", 1, "Gamma", "Delta");
-
-      expect(acquireBookLock).toHaveBeenNthCalledWith(1, "harbor");
-      expect(acquireBookLock).toHaveBeenNthCalledWith(2, "harbor");
-      expect(releases).toBe(2);
+      await expect(tools.renameEntity("harbor", "Alpha", "Beta")).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
+      await expect(tools.patchChapterText("harbor", 1, "Gamma", "Delta")).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
+      expect(acquireBookLock).not.toHaveBeenCalled();
+      expect(releases).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -192,7 +190,7 @@ describe("interaction tools", () => {
     ]);
   });
 
-  it("writes current_focus and author_intent into canonical story paths", async () => {
+  it("rejects current_focus and author_intent file mutations", async () => {
     const tools = createInteractionToolsFromDeps(
       {
         writeNextChapter: vi.fn(async () => ({
@@ -232,13 +230,8 @@ describe("interaction tools", () => {
       },
     );
 
-    await tools.updateCurrentFocus("harbor", "# Current Focus\n\nBring focus back.\n");
-    await tools.updateAuthorIntent("harbor", "# Author Intent\n\nWrite a harbor mystery.\n");
-
-    await expect(readFile(join(projectRoot, "books", "harbor", "story", "current_focus.md"), "utf-8"))
-      .resolves.toContain("Bring focus back");
-    await expect(readFile(join(projectRoot, "books", "harbor", "story", "author_intent.md"), "utf-8"))
-      .resolves.toContain("harbor mystery");
+    await expect(tools.updateCurrentFocus("harbor", "Bring focus back")).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
+    await expect(tools.updateAuthorIntent("harbor", "Write a harbor mystery")).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
   });
 
   it("rejects truth-file writes outside the canonical truth-file allowlist", async () => {
@@ -282,7 +275,7 @@ describe("interaction tools", () => {
     );
 
     await expect(tools.writeTruthFile("harbor", "runtime/agent_notes.md", "notes"))
-      .rejects.toThrow("Invalid truth file name");
+      .rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
   });
 
   it("rejects control-file writes for Runtime-authority books", async () => {
@@ -301,9 +294,9 @@ describe("interaction tools", () => {
     );
 
     await expect(tools.updateCurrentFocus("harbor", "must not be written"))
-      .rejects.toThrow("Runtime-authority");
+      .rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
     await expect(tools.updateAuthorIntent("harbor", "must not be written"))
-      .rejects.toThrow("Runtime-authority");
+      .rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
     expect(ensureControlDocuments).not.toHaveBeenCalled();
   });
 

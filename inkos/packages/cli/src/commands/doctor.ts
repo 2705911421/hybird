@@ -5,7 +5,6 @@ import { findProjectRoot, log, logError, GLOBAL_ENV_PATH } from "../utils.js";
 import { fetchWithProxy } from "@actalk/inkos-core";
 import {
   ensureNodeRuntimePinFiles,
-  evaluateSqliteMemorySupport,
   inspectNodeRuntimePinFiles,
 } from "../runtime-requirements.js";
 import {
@@ -130,10 +129,6 @@ export const doctorCommand = new Command("doctor")
       detail: nodeVersion,
     });
     checks.push({
-      name: "SQLite memory index (Node 22+)",
-      ...evaluateSqliteMemorySupport({ nodeVersion }),
-    });
-    checks.push({
       name: "Node runtime pin files",
       ...await inspectNodeRuntimePinFiles(root),
     });
@@ -234,7 +229,7 @@ export const doctorCommand = new Command("doctor")
           checks.push({
             name: "Version Migration",
             ok: false,
-            detail: `${legacyCount} book(s) using legacy format (pre-v0.6). Run 'inkos write next' on each to auto-migrate, or re-init with 'inkos init'.`,
+            detail: `${legacyCount} book(s) use legacy format (pre-v0.6) and are read-only. Run migration dry-run, backup, verify, and cut over to Story Runtime.`,
           });
         } else if (bookIds.length > 0) {
           checks.push({

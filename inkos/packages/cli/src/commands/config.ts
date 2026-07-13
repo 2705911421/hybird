@@ -64,6 +64,12 @@ configCommand
         log(`Known keys: ${candidates.join(", ")}`);
         process.exit(1);
       }
+      if (key === "storyRuntime.mode" && value !== "story-runtime") {
+        throw new Error("Phase 8 retired legacy/shadow write modes. Use story-runtime or run the migration wizard.");
+      }
+      if (key === "storyRuntime.fallbackOnUnavailable" && value !== "false") {
+        throw new Error("Phase 8 requires fallbackOnUnavailable=false; Runtime authority fails closed.");
+      }
 
       let target = config;
       for (let i = 0; i < keys.length - 1; i++) {

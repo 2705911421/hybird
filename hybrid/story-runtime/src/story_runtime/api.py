@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from .config import RuntimeConfig
 from .chapter_commits import ChapterCommitService
 from .contracts import (
-    AppendEventsRequest, AppendEventsResult, ChapterArtifactResult, CommitChapterRequest, ContextQueryResult, DoctorResult,
+    AppendEventsRequest, AppendEventsResult, TypedDiffCommandRequest, ChapterArtifactResult, CommitChapterRequest, ContextQueryResult, DoctorResult,
     CreateProjectRequest, EntityResult, ErrorResponse, ExportSnapshotRequest, FinalizedCommitResult, HealthResponse,
     MigrateProjectRequest, PrepareChapterRequest, ProjectStatusResponse,
     PrepareChapterResult, ProjectCreatedResult, QueryContextRequest, ReplayProjectionsRequest,
@@ -41,7 +41,7 @@ WRITE_RESPONSES = {
 }
 WriteRequest = Union[
     PrepareChapterRequest, ValidateChapterArtifactsRequest, CommitChapterRequest,
-    AppendEventsRequest, ReplayProjectionsRequest, MigrateProjectRequest, ExportSnapshotRequest,
+    AppendEventsRequest, TypedDiffCommandRequest, ReplayProjectionsRequest, MigrateProjectRequest, ExportSnapshotRequest,
     CommitRecoveryRequest, OutboxRunRequest,
     ValidateReviewsRequest, StoreReviewDecisionRequest, ValidateRevisionRequest,
 ]
@@ -252,6 +252,11 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     def append_events(body: AppendEventsRequest):
         if not config.writes_enabled: disabled(body)
         return commits.append_operator_events(body)
+
+    @app.post(f"{API_PREFIX}/commands/typed-diff", response_model=AppendEventsResult, operation_id="applyTypedDiff", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
+    def apply_typed_diff(body: TypedDiffCommandRequest):
+        if not config.writes_enabled: disabled(body)
+        return commits.apply_typed_diff(body)
 
     @app.post(f"{API_PREFIX}/projections/replay", response_model=ReplayProjectionsResult, operation_id="replayProjections", dependencies=[Depends(authorize)], responses=WRITE_RESPONSES)
     def replay_projections(body: ReplayProjectionsRequest):
