@@ -62,6 +62,12 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 - default-branch GitHub Actions run：`PENDING`
 - final closeout commit：`PENDING`
 
+## 默认分支 CI 修复记录
+
+默认分支 run [`29388494342`](https://github.com/2705911421/hybird/actions/runs/29388494342) 正确被 aggregate 阻断：macOS 全绿，Ubuntu 的 Runtime full suite 有 2 个 Phase 7 fixture 测试因单个 CJK path component 为 270 UTF-8 bytes、超过 Linux `NAME_MAX=255` 而失败，`RC-1 Required Gate` 随之失败。没有忽略或重跑掩盖该结果。
+
+修复提交 `204461a3c0f58e36730d9b33b635698cf1bf023f` 将同样的 30 段 CJK long-path 语义改为 30 层短 component，并新增每个 component 不超过 255 bytes 的断言。该 clean commit 上定点 2/2、Runtime full 113/113、architecture、pip check 与 compileall 均 exit 0。下一次默认分支 run 尚待实际成功。
+
 ## 禁止项核对
 
 未修改历史 Runtime event/revision，未重写 Studio，未修改章节事务，未新增 authority mode，未恢复 shadow writing，未降低 Runtime unavailable fail-closed 标准，未开始 RC-2。

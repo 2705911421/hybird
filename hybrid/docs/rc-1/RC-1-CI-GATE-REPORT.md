@@ -45,3 +45,9 @@
 | branch protection | NOT ENABLED；需管理员操作 |
 
 因此当前 F-002 为 **PARTIAL**。只有默认分支最终提交的实际 run 成功后，workflow/release 部分才能标记 CLOSED；branch protection 状态仍必须如实保留为管理员待办。
+
+## First default-branch attempt and correction
+
+Run [`29388494342`](https://github.com/2705911421/hybird/actions/runs/29388494342) 证明 blocking 行为生效：Ubuntu `Story Runtime full suite` 因 Phase 7 long-path fixture 的单个 UTF-8 component 超过 Linux 255-byte 限制而失败，aggregate `RC-1 Required Gate` 同步失败。macOS job 已成功；失败不是 `continue-on-error` 或非阻断告警。
+
+提交 `204461a3c0f58e36730d9b33b635698cf1bf023f` 保留长路径覆盖，将一个 270-byte component 改为 30 层 9-byte CJK components，并新增跨平台 component-length 断言。clean commit 本地定点 2/2、Runtime 113/113 与 Python package/architecture gates 通过。后续 default-branch run 才能作为 F-002 的成功证据。
