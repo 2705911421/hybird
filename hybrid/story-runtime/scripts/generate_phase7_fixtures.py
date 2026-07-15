@@ -38,7 +38,12 @@ def build(root: Path) -> dict[str, str]:
     catalog["alias-collision"] = "alias collision"
     inkos(root / "multi-volume", [1, 2]); write(root / "multi-volume" / "volumes" / "volume-1.json", '{"chapters":[1]}'); write(root / "multi-volume" / "volumes" / "volume-2.json", '{"chapters":[2]}')
     catalog["multi-volume"] = "multi-volume"
-    long_root = root / "windows-long-path" / ("长目录" * 30); inkos(long_root, [1]); catalog["windows-long-path"] = "Windows long path"
+    # Keep every component below Linux's 255-byte NAME_MAX while preserving a
+    # genuinely long, CJK-heavy path for Windows migration coverage.
+    long_root = root / "windows-long-path"
+    for _ in range(30):
+        long_root /= "长目录"
+    inkos(long_root, [1]); catalog["windows-long-path"] = "Windows long path"
     web = root / "webnovel-mismatch"; write(web / ".webnovel" / "state.json", '{"version":"6.2"}'); write(web / "events" / "events.json", '[{"event_id":"e1","event_type":"fact.set","subject":"p"}]')
     db = sqlite3.connect(web / "index.db")
     try:

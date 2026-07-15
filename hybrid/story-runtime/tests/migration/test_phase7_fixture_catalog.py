@@ -19,13 +19,17 @@ def _builder():
 
 
 def test_fixture_catalog_covers_phase7_attack_and_scale_cases(tmp_path):
-    catalog = _builder()(tmp_path / "fixtures")
+    fixture_root = tmp_path / "fixtures"
+    catalog = _builder()(fixture_root)
     expected = {
         "inkos-small", "inkos-large", "inkos-truth-conflict", "chapter-gap", "CJK-文件名-📚",
         "corrupt-json", "corrupt-sqlite", "alias-collision", "multi-volume", "windows-long-path",
         "webnovel-mismatch", "zip-slip", "million-char-synthetic", "symlink-attack",
     }
     assert expected <= set(catalog)
+    long_path_config = fixture_root / "windows-long-path" / Path(*(["长目录"] * 30)) / "inkos.json"
+    assert long_path_config.is_file()
+    assert all(len(part.encode("utf-8")) <= 255 for part in long_path_config.parts)
 
 
 def test_million_character_fixture_scans_with_bounded_memory_contract(runtime, tmp_path):
