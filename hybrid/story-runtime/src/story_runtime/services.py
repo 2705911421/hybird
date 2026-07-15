@@ -15,6 +15,7 @@ from .database import Database
 from .chapter_commits import ChapterCommitService
 from .errors import ConflictError
 from .repository import StoryRepository
+from .revision_manifests import RevisionManifestRepository, manifest_integrity_issues
 
 
 class RuntimeServices:
@@ -40,12 +41,19 @@ class RuntimeServices:
         project = self.repository.get_project(project_id)
         projection = self.repository.projection_health(project_id)
         degraded_names = [row["projection_name"] for row in projection["projections"] if row["status"] != "ready"]
+        with self.database.read() as conn:
+            manifest_issues = manifest_integrity_issues(conn, project_id)
+        latest_manifest = RevisionManifestRepository(self.database).latest(project_id)
         return ProjectStatusResponse(
             project_id=project_id, revision=project["revision"], phase=project["phase"], latest_chapter=project["latest_chapter"],
             projection_health={
                 "status": projection["status"],
                 "recoverable": "true" if projection["recoverable"] else "false",
                 "repair": "replay:" + ",".join(degraded_names) if degraded_names else "none",
+                "manifest_status": "degraded" if manifest_issues else "ready",
+                "latest_manifest_hash": latest_manifest.manifest_hash if latest_manifest else "none",
+                "manifest_issue_codes": ",".join(code for code, _ in manifest_issues) or "none",
+                "historical_state_queryable": "false",
             },
             schema_version=project["schema_version"],
             active_prepare_ids=self._active_prepare_ids(project_id),
@@ -194,6 +202,21 @@ class RuntimeServices:
         ]
         if deep and self.repository.integrity_check() != "ok":
             checks[1] = DoctorCheck(code="authority.integrity", status="fail", message="SQLite integrity check failed", repair="restore a verified snapshot")
+        with self.database.read() as conn:
+            manifest_issues = manifest_integrity_issues(conn, project_id)
+        if not manifest_issues:
+            checks.append(DoctorCheck(
+                code="manifest.chain", status="pass",
+                message="project revision manifest chain and current pointer are consistent", repair=None,
+            ))
+        else:
+            for code, message in manifest_issues:
+                is_legacy_boundary = code == "manifest.bootstrap_required"
+                checks.append(DoctorCheck(
+                    code=code, status="warning" if is_legacy_boundary else "fail", message=message,
+                    repair=("establish one explicit bootstrap boundary before Runtime authority writes"
+                            if is_legacy_boundary else "restore exact immutable authority from a verified backup; do not synthesize manifests"),
+                ))
         projection = self.repository.projection_health(project_id)
         if projection["status"] == "ready":
             checks.append(DoctorCheck(code="projections.core", status="pass", message="all core projections are ready", repair=None))

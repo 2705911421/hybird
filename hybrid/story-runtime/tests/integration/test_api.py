@@ -13,8 +13,12 @@ def test_read_only_http_runtime(app, auth_headers):
         assert status.json()["revision"] == 7
         entity = client.get("/api/story-runtime/v1/projects/lighthouse-fixture/entities/char-lin?include_history=true", headers=auth_headers)
         assert entity.json()["entity"]["canonical_name"] == "Lin Yue"
+        historical = client.get("/api/story-runtime/v1/projects/lighthouse-fixture/entities/char-lin?at_revision=1", headers=auth_headers)
+        assert historical.status_code == 409
+        assert historical.json()["code"] == "HISTORY_NOT_IMPLEMENTED"
         doctor = client.get("/api/story-runtime/v1/projects/lighthouse-fixture/doctor?deep=true", headers=auth_headers)
-        assert doctor.json()["status"] == "ok"
+        assert doctor.json()["status"] == "warning"
+        assert any(check["code"] == "manifest.bootstrap_required" for check in doctor.json()["checks"])
 
 
 def test_context_query_and_rag_over_http(app, auth_headers):

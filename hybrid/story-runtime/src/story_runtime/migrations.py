@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -533,6 +534,95 @@ MIGRATIONS = (
         DROP INDEX story_events_project_sequence_idx;
         """,
     ),
+    Migration(
+        8,
+        "immutable_project_revision_manifests",
+        """
+        ALTER TABLE projects ADD COLUMN history_completeness TEXT NOT NULL DEFAULT 'unavailable'
+          CHECK (history_completeness IN (
+            'native_complete','verified_import','bootstrap_boundary',
+            'manifest_only','pruned','unavailable'
+          ));
+        ALTER TABLE projects ADD COLUMN history_available_from_revision INTEGER
+          CHECK (history_available_from_revision IS NULL OR history_available_from_revision >= 0);
+        ALTER TABLE projects ADD COLUMN manifest_backfill_required INTEGER NOT NULL DEFAULT 1
+          CHECK (manifest_backfill_required IN (0,1));
+        ALTER TABLE projects ADD COLUMN manifest_writer_version TEXT NOT NULL DEFAULT 'legacy-unversioned';
+
+        CREATE TABLE project_revisions (
+          project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+          revision INTEGER NOT NULL CHECK (revision >= 0),
+          manifest_id TEXT NOT NULL UNIQUE,
+          previous_revision INTEGER,
+          previous_manifest_hash TEXT,
+          transition_kind TEXT NOT NULL CHECK (transition_kind IN (
+            'initialize_empty','chapter_finalize','chapter_replace','domain_command',
+            'bootstrap','verified_import','compensation','tombstone','restore'
+          )),
+          command_id TEXT NOT NULL,
+          commit_id TEXT,
+          idempotency_key TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          event_count INTEGER NOT NULL CHECK (event_count >= 0),
+          first_event_sequence INTEGER,
+          last_event_sequence INTEGER,
+          ordered_event_ids_json TEXT NOT NULL CHECK (json_valid(ordered_event_ids_json)),
+          ordered_event_hashes_json TEXT NOT NULL CHECK (json_valid(ordered_event_hashes_json)),
+          ordered_event_ids_hash TEXT NOT NULL,
+          artifact_refs_json TEXT NOT NULL CHECK (json_valid(artifact_refs_json)),
+          artifact_hashes_json TEXT NOT NULL CHECK (json_valid(artifact_hashes_json)),
+          event_schema_version TEXT NOT NULL,
+          reducer_version TEXT NOT NULL,
+          manifest_schema_version TEXT NOT NULL,
+          contract_version TEXT NOT NULL,
+          provenance_class TEXT NOT NULL CHECK (provenance_class IN (
+            'native','verified_import','bootstrap_boundary','compensation'
+          )),
+          provenance_id TEXT NOT NULL,
+          actor_class TEXT NOT NULL,
+          state_hash TEXT NOT NULL,
+          manifest_hash TEXT NOT NULL UNIQUE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (project_id, revision),
+          UNIQUE (project_id, command_id),
+          UNIQUE (project_id, idempotency_key),
+          CHECK (
+            (revision = 0 AND previous_revision IS NULL AND previous_manifest_hash IS NULL)
+            OR (provenance_class = 'bootstrap_boundary' AND previous_revision IS NULL AND previous_manifest_hash IS NULL)
+            OR (revision > 0 AND previous_revision = revision - 1 AND previous_manifest_hash IS NOT NULL)
+          ),
+          CHECK (
+            (event_count = 0 AND first_event_sequence IS NULL AND last_event_sequence IS NULL)
+            OR (event_count > 0 AND first_event_sequence IS NOT NULL AND last_event_sequence IS NOT NULL
+                AND last_event_sequence >= first_event_sequence)
+          )
+        );
+        CREATE UNIQUE INDEX project_revisions_commit_idx
+          ON project_revisions(project_id, commit_id) WHERE commit_id IS NOT NULL;
+        CREATE INDEX project_revisions_created_idx
+          ON project_revisions(project_id, created_at, revision);
+
+        CREATE TRIGGER project_revisions_immutable_update
+        BEFORE UPDATE ON project_revisions BEGIN
+          SELECT RAISE(ABORT, 'project revision manifests are immutable');
+        END;
+        CREATE TRIGGER project_revisions_immutable_delete
+        BEFORE DELETE ON project_revisions BEGIN
+          SELECT RAISE(ABORT, 'project revision manifests are immutable');
+        END;
+        """,
+        """
+        DROP TRIGGER project_revisions_immutable_delete;
+        DROP TRIGGER project_revisions_immutable_update;
+        DROP INDEX project_revisions_created_idx;
+        DROP INDEX project_revisions_commit_idx;
+        DROP TABLE project_revisions;
+        ALTER TABLE projects DROP COLUMN manifest_writer_version;
+        ALTER TABLE projects DROP COLUMN manifest_backfill_required;
+        ALTER TABLE projects DROP COLUMN history_available_from_revision;
+        ALTER TABLE projects DROP COLUMN history_completeness;
+        """,
+    ),
 )
 
 
@@ -571,6 +661,8 @@ class MigrationEngine:
             if current < target:
                 for migration in MIGRATIONS:
                     if current < migration.version <= target:
+                        if migration.version == 8:
+                            self._backup_before_manifest_migration(conn)
                         applied_at = datetime.now(timezone.utc).isoformat()
                         values = (migration.name, migration.checksum, applied_at)
                         escaped = tuple(value.replace("'", "''") for value in values)
@@ -580,6 +672,13 @@ class MigrationEngine:
                             + f"\nINSERT INTO schema_migrations VALUES ({migration.version}, '{escaped[0]}', '{escaped[1]}', '{escaped[2]}');\nCOMMIT;"
                         )
             elif current > target:
+                if current >= 8 and target < 8:
+                    manifest_count = int(conn.execute("SELECT COUNT(*) FROM project_revisions").fetchone()[0])
+                    if manifest_count:
+                        raise RuntimeError(
+                            "schema downgrade is blocked after immutable revision manifests exist; "
+                            "stop writes and restore a verified whole-database backup with a compatible Runtime"
+                        )
                 for migration in reversed(MIGRATIONS):
                     if target < migration.version <= current:
                         conn.executescript(
@@ -588,3 +687,26 @@ class MigrationEngine:
                             + f"\nDELETE FROM schema_migrations WHERE version = {migration.version};\nCOMMIT;"
                         )
         return target
+
+    @staticmethod
+    def _backup_before_manifest_migration(conn: sqlite3.Connection) -> None:
+        database_path = str(conn.execute("PRAGMA database_list").fetchone()[2])
+        if not database_path or database_path == ":memory:":
+            return
+        source = Path(database_path)
+        backup = source.with_name(f"{source.name}.pre-manifest-v7.sqlite3")
+        if backup.exists():
+            raise RuntimeError(f"pre-manifest migration backup already exists: {backup}")
+        destination = sqlite3.connect(backup)
+        try:
+            conn.backup(destination)
+            integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
+            version = int(destination.execute("SELECT COALESCE(MAX(version),0) FROM schema_migrations").fetchone()[0])
+            if integrity != "ok" or version != 7:
+                raise RuntimeError("pre-manifest migration backup verification failed")
+        except Exception:
+            destination.close()
+            backup.unlink(missing_ok=True)
+            raise
+        else:
+            destination.close()

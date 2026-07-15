@@ -27,6 +27,7 @@ from .errors import ConflictError, NotFoundError, RuntimeErrorBase
 from .services import RuntimeServices
 from .repository import StoryRepository
 from .chapter_commits import ChapterCommitService
+from .revision_manifests import ProjectRevisionAllocator
 
 
 CIR_VERSION = "canonical-import/v1"
@@ -226,7 +227,7 @@ class LegacyMigrationService:
         self._require_stage(row, {"VERIFYING", "FAILED"})
         self._verify_scanned_source(row)
         report = self._verify_import(row)
-        stage = "COMPLETED" if report["blocking_conflicts"] == 0 and report["chapter_body_coverage"] == 1.0 and report["doctor_status"] == "ok" and report["replay_matched"] else "FAILED"
+        stage = "COMPLETED" if report["blocking_conflicts"] == 0 and report["chapter_body_coverage"] == 1.0 and not report["doctor_blocking"] and report["replay_matched"] else "FAILED"
         self._update(job_id, stage, 100 if stage == "COMPLETED" else 95, action.actor, "verify", verification=report,
                      details={"result": stage})
         return self.get(job_id)
@@ -255,12 +256,23 @@ class LegacyMigrationService:
         if action.confirmation != "CONFIRM_RUNTIME_CUTOVER":
             raise ConflictError("CUTOVER_CONFIRMATION_REQUIRED", "explicit CONFIRM_RUNTIME_CUTOVER confirmation is required")
         verification = json.loads(row["verification_json"] or "{}")
-        if verification.get("doctor_status") != "ok" or not verification.get("replay_hash"):
+        if verification.get("doctor_blocking", True) or not verification.get("replay_hash"):
             raise ConflictError("CUTOVER_VERIFICATION_REQUIRED", "doctor and replay verification must pass before cutover")
         with self.database.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("UPDATE projects SET authority_mode='runtime',phase='runtime-authority',runtime_finalized_at=?,updated_at=? WHERE project_id=? AND authority_mode='legacy'", (_now(), _now(), row["target_project_id"]))
-            if conn.total_changes == 0:
+            now = _now()
+            project = conn.execute(
+                "SELECT revision,authority_mode FROM projects WHERE project_id=?", (row["target_project_id"],)
+            ).fetchone()
+            if project and project["authority_mode"] == "legacy":
+                state_hash = ChapterCommitService(self.database).projection_hash(conn, row["target_project_id"])
+                ProjectRevisionAllocator().establish_bootstrap(
+                    conn, project_id=row["target_project_id"], expected_revision=int(project["revision"]),
+                    state_hash=state_hash, provenance_id=f"migration-job:{job_id}",
+                    created_at=now, actor_class="migration_operator",
+                )
+            conn.execute("UPDATE projects SET authority_mode='runtime',phase='runtime-authority',runtime_finalized_at=?,updated_at=? WHERE project_id=? AND authority_mode='legacy'", (now, now, row["target_project_id"]))
+            if conn.execute("SELECT changes()").fetchone()[0] == 0:
                 project = conn.execute("SELECT authority_mode FROM projects WHERE project_id=?", (row["target_project_id"],)).fetchone()
                 if not project or project["authority_mode"] != "runtime":
                     conn.rollback()
@@ -839,6 +851,10 @@ class LegacyMigrationService:
                         revision = 0
                     else:
                         revision = int(project["revision"])
+                    if batch and revision == 0:
+                        # Current-state-only import has one honest authority
+                        # boundary, never one revision per source row.
+                        revision = 1
                     for kind, item in batch:
                         if self._ledger_exists(conn, row["job_id"], item["cir_item_id"]):
                             continue
@@ -867,8 +883,7 @@ class LegacyMigrationService:
         elif kind == "facts":
             conn.execute("INSERT OR IGNORE INTO facts(project_id,fact_id,subject,predicate,value_json,valid_from_revision) VALUES (?,?,?,?,?,?)", (project_id, item["fact_id"], item["subject"], item["predicate"], _json(item.get("value")), revision))
         elif kind == "events":
-            revision += 1
-            conn.execute("INSERT OR IGNORE INTO story_events(project_id,event_id,event_type,subject,chapter_number,payload_json,evidence_json,confidence,schema_version,created_at,applied_revision,aggregate_type,aggregate_id) VALUES (?,?,?,?,?,?,'[]',?,?,?,?,?,?)", (project_id, item["event_id"], item["event_type"], item["subject"], item.get("chapter_number"), _json(item.get("payload", {})), item.get("confidence", 1.0), SCHEMA_VERSION, now, revision, "project", project_id))
+            conn.execute("INSERT OR IGNORE INTO story_events(project_id,event_id,event_type,subject,chapter_number,payload_json,evidence_json,confidence,schema_version,created_at,applied_revision,aggregate_type,aggregate_id) VALUES (?,?,?,?,?,?,'[]',?,?,?,?,?,?)", (project_id, item["event_id"], item["event_type"], item["subject"], item.get("chapter_number"), _json(item.get("payload", {})), item.get("confidence", 1.0), SCHEMA_VERSION, now, None, "project", project_id))
         elif kind == "timeline":
             conn.execute("INSERT OR IGNORE INTO timeline(project_id,timeline_id,sequence_key,title,event_id,details_json) VALUES (?,?,?,?,?,?)", (project_id, item["timeline_id"], item["sequence_key"], item["title"], item.get("event_id"), _json(item.get("details", {}))))
         elif kind == "narrative_threads":
@@ -878,9 +893,8 @@ class LegacyMigrationService:
         elif kind == "documents":
             conn.execute("INSERT OR IGNORE INTO retrieval_documents(project_id,source_id,source_type,chapter_number,text) VALUES (?,?,?,?,?)", (project_id, item["cir_item_id"], item["document_type"], item.get("chapter_number"), item.get("content") or _json(item.get("metadata", {}))))
         elif kind == "chapters":
-            revision += 1
             commit_id = item["cir_item_id"]
-            conn.execute("INSERT OR IGNORE INTO chapter_commits(commit_id,project_id,chapter_number,request_id,idempotency_key,request_hash,expected_revision,resulting_revision,state,body_sha256,artifact_sha256,schema_version,created_at,updated_at,finalized_at) VALUES (?,?,?,?,?,?,?,?, 'FINALIZED',?,?,?,?,?,?)", (commit_id, project_id, item["chapter_number"], commit_id, f"migration:{row['job_id']}:{commit_id}", item["body_sha256"], revision - 1, revision, item["body_sha256"], item["body_sha256"], SCHEMA_VERSION, now, now, now))
+            conn.execute("INSERT OR IGNORE INTO chapter_commits(commit_id,project_id,chapter_number,request_id,idempotency_key,request_hash,expected_revision,resulting_revision,state,body_sha256,artifact_sha256,schema_version,created_at,updated_at,finalized_at) VALUES (?,?,?,?,?,?,?,?, 'FINALIZED',?,?,?,?,?,?)", (commit_id, project_id, item["chapter_number"], commit_id, f"migration:{row['job_id']}:{commit_id}", item["body_sha256"], revision, revision, item["body_sha256"], item["body_sha256"], SCHEMA_VERSION, now, now, now))
             conn.execute("INSERT OR IGNORE INTO chapter_artifacts(commit_id,project_id,chapter_number,title,body_text,summary,outline_fulfillment_json,review_json,state_mutation_proposal_json,evidence_spans_json,events_json,schema_version,body_sha256,checksum,created_at) VALUES (?,?,?,?,?,?,'{}','{}','{}','[]','[]',?,?,?,?)", (commit_id, project_id, item["chapter_number"], item["title"], item["body"], "", SCHEMA_VERSION, item["body_sha256"], item["body_sha256"], now))
             conn.execute("INSERT OR IGNORE INTO chapter_summaries(project_id,chapter_number,title,summary,body_sha256) VALUES (?,?,?,?,?)", (project_id, item["chapter_number"], item["title"], "", item["body_sha256"]))
         elif kind == "reviews":
@@ -925,7 +939,9 @@ class LegacyMigrationService:
             "quarantined_items": len([d for d in json.loads(row["decisions_json"]).values() if d["decision"] == "quarantine"]),
             "blocking_conflicts": len(unresolved), "source_checksum": _sha_bytes(_json(source_manifest).encode()),
             "projection_hash": projection_hash, "replay_hash": replay_hash, "replay_matched": replay_hash == projection_hash,
-            "doctor_status": doctor.status, "doctor": doctor.model_dump(mode="json"),
+            "doctor_status": doctor.status,
+            "doctor_blocking": any(check.status in {"fail", "blocked"} for check in doctor.checks),
+            "doctor": doctor.model_dump(mode="json"),
         }
 
     def _replay_cir_hash(self, row: sqlite3.Row, cir: dict[str, Any]) -> str:
@@ -952,6 +968,8 @@ class LegacyMigrationService:
                     revision = 0
                 else:
                     revision = int(project["revision"])
+                if any(cir[kind] for kind in ("entities", "relationships", "facts", "events", "timeline", "narrative_threads", "summaries", "documents", "chapters")) and revision == 0:
+                    revision = 1
                 for kind in ("entities", "relationships", "facts", "events", "timeline", "narrative_threads", "summaries", "documents", "chapters", "reviews"):
                     for item in cir[kind]:
                         revision = self._import_item(conn, row, kind, item, revision, now)

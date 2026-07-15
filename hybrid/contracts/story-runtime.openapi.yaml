@@ -373,6 +373,7 @@ paths:
         - name: at_revision
           in: query
           required: false
+          description: RC-2B Batch 1 reserves this parameter but returns HISTORY_NOT_IMPLEMENTED; only latest reads are available.
           schema: { type: integer, minimum: 0 }
         - name: include_history
           in: query
@@ -386,6 +387,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EntityResult"
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /projects/{project_id}/chapters/{chapter_number}:
     get:

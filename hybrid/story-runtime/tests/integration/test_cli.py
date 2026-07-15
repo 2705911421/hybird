@@ -19,7 +19,8 @@ def test_cli_initializes_and_reads_fixture(tmp_path, capsys):
     assert status["latest_chapter"] == 3
     assert main(["--db", str(db), "doctor", "lighthouse-fixture", "--deep"]) == 0
     doctor = json.loads(capsys.readouterr().out)
-    assert doctor["status"] == "ok"
+    assert doctor["status"] == "warning"
+    assert any(check["code"] == "manifest.bootstrap_required" for check in doctor["checks"])
     assert main(["--db", str(db), "overview", "lighthouse-fixture"]) == 0
     overview = json.loads(capsys.readouterr().out)
     assert overview["current_revision"] == 7
@@ -48,7 +49,7 @@ def test_cli_rejects_unpublished_in_place_downgrade(tmp_path, capsys):
         main(["--db", str(db), "migrate", "--target", "6"])
     assert error.value.code == 2
     assert "in-place database downgrade is not supported" in capsys.readouterr().err
-    assert database.migrations.current_version() == 7
+    assert database.migrations.current_version() == 8
 
 
 def test_cli_emits_network_filesystem_warning(tmp_path, capsys, monkeypatch):

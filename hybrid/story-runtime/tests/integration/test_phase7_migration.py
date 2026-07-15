@@ -81,6 +81,9 @@ def test_inkos_cir_dry_run_import_verify_cutover_is_idempotent(app, auth_headers
         with write_app.state.database.connect() as conn:
             assert conn.execute("SELECT COUNT(*) FROM chapter_commits WHERE project_id='migrated-cjk'").fetchone()[0] == 2
             assert conn.execute("SELECT COUNT(*) FROM entities WHERE project_id='migrated-cjk'").fetchone()[0] == 1
+            assert conn.execute("SELECT revision FROM projects WHERE project_id='migrated-cjk'").fetchone()[0] == 1
+            assert conn.execute("SELECT COUNT(*) FROM project_revisions WHERE project_id='migrated-cjk'").fetchone()[0] == 0
+            assert conn.execute("SELECT COUNT(*) FROM story_events WHERE project_id='migrated-cjk' AND applied_revision IS NOT NULL").fetchone()[0] == 0
         # Retry is ledger-idempotent and does not create duplicate authority rows.
         job = _post(client, auth_headers, job["migration_job_id"], "verify")
         assert job["current_stage"] == "COMPLETED"
@@ -96,6 +99,13 @@ def test_inkos_cir_dry_run_import_verify_cutover_is_idempotent(app, auth_headers
         assert job["cutover_confirmed"] is True
         status = client.get("/api/story-runtime/v1/projects/migrated-cjk/status", headers=auth_headers).json()
         assert status["authority_mode"] == "runtime"
+        with write_app.state.database.connect() as conn:
+            boundary = conn.execute("SELECT * FROM project_revisions WHERE project_id='migrated-cjk'").fetchall()
+            assert len(boundary) == 1
+            assert boundary[0]["revision"] == 1
+            assert boundary[0]["transition_kind"] == "bootstrap"
+            assert boundary[0]["provenance_class"] == "bootstrap_boundary"
+            assert boundary[0]["previous_revision"] is None
 
     assert mtimes == {str(path.relative_to(source)): path.stat().st_mtime_ns for path in source.rglob("*") if path.is_file()}
     assert not any(path.name.startswith("migration") for path in source.rglob("*"))

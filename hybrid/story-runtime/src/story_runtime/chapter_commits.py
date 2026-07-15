@@ -34,6 +34,12 @@ from .contracts import (
 from .database import Database
 from .errors import ConflictError, DatabaseUnavailableError, NotFoundError, RuntimeErrorBase
 from .reviews import forbidden_agent_field
+from .revision_manifests import (
+    AuthorityWriteResult,
+    ProjectRevisionAllocator,
+    RevisionTransition,
+    create_initial_manifest,
+)
 
 
 _NAMESPACE = UUID("6bc66f5d-3127-4ac8-9d51-e8ec2b520904")
@@ -80,6 +86,7 @@ class ChapterCommitService:
         self.database = database
         self.fault_injector = fault_injector
         self.unified_review_enabled = unified_review_enabled
+        self.revision_allocator = ProjectRevisionAllocator()
 
     def create_project(self, request: CreateProjectRequest) -> ProjectCreatedResult:
         request_hash = _hash(request.model_dump(mode="json", exclude={"request_id"}))
@@ -100,8 +107,15 @@ class ChapterCommitService:
                 if existing:
                     raise ConflictError("PROJECT_EXISTS", f"project already exists: {request.project_id}", current_revision=existing["revision"])
                 conn.execute(
-                    "INSERT INTO projects(project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at,authority_mode) VALUES (?,0,'initialized',0,?,?,?,'runtime')",
+                    "INSERT INTO projects(project_id,revision,phase,latest_chapter,schema_version,created_at,updated_at,authority_mode,"
+                    "history_completeness,history_available_from_revision,manifest_backfill_required,manifest_writer_version) "
+                    "VALUES (?,0,'initialized',0,?,?,?,'runtime','native_complete',0,0,'revision-manifest/v1')",
                     (request.project_id, SCHEMA_VERSION, now, now),
+                )
+                create_initial_manifest(
+                    conn, project_id=request.project_id,
+                    command_id=f"project.create:{uuid5(_NAMESPACE, request.project_id)}",
+                    idempotency_key=request.idempotency_key, request_hash=request_hash, created_at=now,
                 )
                 result = ProjectCreatedResult(project_id=request.project_id, authority_mode="runtime", revision=0)
                 conn.execute(
@@ -239,25 +253,48 @@ class ChapterCommitService:
                 self._check_revision(project, request.expected_revision)
                 if self.unified_review_enabled:
                     self._check_review_gate(conn, request.project_id, request.artifacts.chapter_number, request.expected_revision, request.artifacts.body_sha256)
-                resulting_revision = request.expected_revision + 1
-                commit = self._set_state(conn, commit, "PERSISTING", "commit transaction started", now)
-                events = self._append_commit_events(conn, commit, request.artifacts.events, resulting_revision, now)
-                commit = self._set_state(conn, commit, "COMMITTED", "artifact and events persisted", now, resulting_revision)
-                commit = self._set_state(conn, commit, "PROJECTING", "core projection reducers started", now, resulting_revision)
-                for event in events:
-                    self._inject("commit.reducer")
-                    self._apply_event(conn, request.project_id, event, resulting_revision)
-                conn.execute(
-                    "INSERT INTO chapter_summaries(project_id,chapter_number,title,summary,body_sha256) VALUES (?,?,?,?,?) ON CONFLICT(project_id,chapter_number) DO UPDATE SET title=excluded.title,summary=excluded.summary,body_sha256=excluded.body_sha256",
-                    (request.project_id, request.artifacts.chapter_number, request.artifacts.title, request.artifacts.summary, request.artifacts.body_sha256),
+                pre_transition_hash = self.projection_hash(conn, request.project_id)
+
+                def write_authority(resulting_revision: int) -> AuthorityWriteResult:
+                    current_commit = self._set_state(conn, commit, "PERSISTING", "commit transaction started", now)
+                    events = self._append_commit_events(conn, current_commit, request.artifacts.events, resulting_revision, now)
+                    current_commit = self._set_state(conn, current_commit, "COMMITTED", "artifact and events persisted", now, resulting_revision)
+                    current_commit = self._set_state(conn, current_commit, "PROJECTING", "core projection reducers started", now, resulting_revision)
+                    for event in events:
+                        self._inject("commit.reducer")
+                        self._apply_event(conn, request.project_id, event, resulting_revision)
+                    conn.execute(
+                        "INSERT INTO chapter_summaries(project_id,chapter_number,title,summary,body_sha256) VALUES (?,?,?,?,?) ON CONFLICT(project_id,chapter_number) DO UPDATE SET title=excluded.title,summary=excluded.summary,body_sha256=excluded.body_sha256",
+                        (request.project_id, request.artifacts.chapter_number, request.artifacts.title, request.artifacts.summary, request.artifacts.body_sha256),
+                    )
+                    conn.execute(
+                        "UPDATE projects SET latest_chapter=?,phase='drafting',updated_at=?,runtime_finalized_at=COALESCE(runtime_finalized_at,?) WHERE project_id=?",
+                        (request.artifacts.chapter_number, now, now, request.project_id),
+                    )
+                    projection_hash = self._update_checkpoints(conn, request.project_id, resulting_revision, now)
+                    return AuthorityWriteResult(tuple(event["event_id"] for event in events), projection_hash)
+
+                allocation = self.revision_allocator.execute(
+                    conn,
+                    RevisionTransition(
+                        project_id=request.project_id,
+                        expected_revision=request.expected_revision,
+                        transition_kind="chapter_finalize",
+                        command_id=f"chapter.finalize:{commit['commit_id']}",
+                        commit_id=commit["commit_id"],
+                        idempotency_key=request.idempotency_key,
+                        request_hash=_hash(request.model_dump(mode="json", exclude={"request_id"})),
+                        artifact_references=((f"chapter:{commit['commit_id']}", artifact_hash),),
+                        provenance_class="native",
+                        provenance_id=f"chapter-commit:{commit['commit_id']}",
+                        actor_class="chapter_authority",
+                        created_at=now,
+                        pre_transition_state_hash=pre_transition_hash,
+                    ),
+                    write_authority,
                 )
-                conn.execute(
-                    "UPDATE projects SET revision=?,latest_chapter=?,phase='drafting',updated_at=?,runtime_finalized_at=COALESCE(runtime_finalized_at,?) WHERE project_id=? AND revision=?",
-                    (resulting_revision, request.artifacts.chapter_number, now, now, request.project_id, request.expected_revision),
-                )
-                if conn.execute("SELECT changes()").fetchone()[0] != 1:
-                    raise ConflictError("REVISION_CONFLICT", "project revision changed during commit", current_revision=self._project_revision(conn, request.project_id))
-                projection_hash = self._update_checkpoints(conn, request.project_id, resulting_revision, now)
+                resulting_revision = allocation.revision
+                projection_hash = allocation.manifest.state_hash.removeprefix("sha256:")
                 self._inject("commit.before_finalize")
                 self._transition(conn, commit["commit_id"], "PROJECTING", "FINALIZED", "core projections and revision finalized", now, resulting_revision)
                 conn.execute(
@@ -409,26 +446,48 @@ class ChapterCommitService:
                     return AppendEventsResult(**{**json.loads(previous["result_json"]), "replayed": True})
                 project = self._runtime_project(conn, request.project_id)
                 self._check_revision(project, request.expected_revision)
-                revision = request.expected_revision + 1
-                stored: list[dict[str, Any]] = []
                 commit_id = f"operator:{uuid5(_NAMESPACE, request.idempotency_key)}"
-                for ordinal, event in enumerate(request.events):
-                    raw = event.model_dump(mode="json", exclude={"event_id"}, exclude_none=True)
-                    event_id = hashlib.sha256(f"{request.project_id}\0{commit_id}\0{ordinal}\0{_json(raw)}".encode()).hexdigest()
-                    aggregate_id = event.aggregate_id or event.subject
-                    chapter = int(event.payload.get("chapter_number", project["latest_chapter"]))
-                    conn.execute(
-                        "INSERT INTO story_events(project_id,event_id,event_type,subject,chapter_number,payload_json,evidence_json,confidence,commit_id,ordinal,aggregate_type,aggregate_id,schema_version,created_at,applied_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (request.project_id, event_id, event.event_type, event.subject, chapter, _json(event.payload), _json(event.evidence), event.confidence, commit_id, ordinal, event.aggregate_type, aggregate_id, SCHEMA_VERSION, now, revision),
-                    )
-                    stored_event = {**raw, "event_id": event_id, "aggregate_id": aggregate_id, "chapter_number": chapter}
-                    stored.append(stored_event)
-                    self._apply_event(conn, request.project_id, stored_event, revision)
-                conn.execute("UPDATE projects SET revision=?,updated_at=? WHERE project_id=? AND revision=?", (revision, now, request.project_id, request.expected_revision))
-                if conn.execute("SELECT changes()").fetchone()[0] != 1:
-                    raise ConflictError("REVISION_CONFLICT", "project revision changed during operator append", current_revision=self._project_revision(conn, request.project_id))
-                projection_hash = self._update_checkpoints(conn, request.project_id, revision, now)
-                result = AppendEventsResult(request_id=request.request_id, project_id=request.project_id, revision=revision, event_count=len(stored), projection_hash=projection_hash)
+                pre_transition_hash = self.projection_hash(conn, request.project_id)
+
+                def write_authority(revision: int) -> AuthorityWriteResult:
+                    stored: list[dict[str, Any]] = []
+                    for ordinal, event in enumerate(request.events):
+                        raw = event.model_dump(mode="json", exclude={"event_id"}, exclude_none=True)
+                        event_id = hashlib.sha256(f"{request.project_id}\0{commit_id}\0{ordinal}\0{_json(raw)}".encode()).hexdigest()
+                        aggregate_id = event.aggregate_id or event.subject
+                        chapter = int(event.payload.get("chapter_number", project["latest_chapter"]))
+                        conn.execute(
+                            "INSERT INTO story_events(project_id,event_id,event_type,subject,chapter_number,payload_json,evidence_json,confidence,commit_id,ordinal,aggregate_type,aggregate_id,schema_version,created_at,applied_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                            (request.project_id, event_id, event.event_type, event.subject, chapter, _json(event.payload), _json(event.evidence), event.confidence, commit_id, ordinal, event.aggregate_type, aggregate_id, SCHEMA_VERSION, now, revision),
+                        )
+                        stored_event = {**raw, "event_id": event_id, "aggregate_id": aggregate_id, "chapter_number": chapter}
+                        stored.append(stored_event)
+                        self._apply_event(conn, request.project_id, stored_event, revision)
+                    projection_hash = self._update_checkpoints(conn, request.project_id, revision, now)
+                    return AuthorityWriteResult(tuple(event["event_id"] for event in stored), projection_hash)
+
+                allocation = self.revision_allocator.execute(
+                    conn,
+                    RevisionTransition(
+                        project_id=request.project_id,
+                        expected_revision=request.expected_revision,
+                        transition_kind="domain_command",
+                        command_id=f"domain.command:{uuid5(_NAMESPACE, request.project_id + chr(0) + request.idempotency_key)}",
+                        commit_id=None,
+                        idempotency_key=request.idempotency_key,
+                        request_hash=request_hash,
+                        artifact_references=(),
+                        provenance_class="native",
+                        provenance_id=commit_id,
+                        actor_class="manual_operator",
+                        created_at=now,
+                        pre_transition_state_hash=pre_transition_hash,
+                    ),
+                    write_authority,
+                )
+                revision = allocation.revision
+                projection_hash = allocation.manifest.state_hash.removeprefix("sha256:")
+                result = AppendEventsResult(request_id=request.request_id, project_id=request.project_id, revision=revision, event_count=len(request.events), projection_hash=projection_hash)
                 conn.execute(
                     "INSERT INTO idempotency_ledger(project_id,idempotency_key,operation,result_json,created_at,request_hash,status_code) VALUES (?,?,'events.append',?,?,?,200)",
                     (request.project_id, request.idempotency_key, _json(result.model_dump(mode="json")), now, request_hash),
@@ -515,6 +574,17 @@ class ChapterCommitService:
                     request_id=request.request_id, project_id=request.project_id, commit_id=request.commit_id,
                     state="FINALIZED", resulting_revision=commit["resulting_revision"],
                     repair_action="none; commit was already finalized", replayed=True,
+                )
+            finalized_manifest = conn.execute(
+                "SELECT revision,manifest_hash FROM project_revisions WHERE project_id=? AND commit_id=?",
+                (request.project_id, commit["commit_id"]),
+            ).fetchone()
+            if finalized_manifest:
+                raise ConflictError(
+                    "MANIFEST_COMMIT_STATE_MISMATCH",
+                    "an immutable manifest exists for a commit not marked FINALIZED; recovery must not delete its events",
+                    current_revision=finalized_manifest["revision"],
+                    details={"manifest_hash": finalized_manifest["manifest_hash"]},
                 )
             if request.action == "abort":
                 if commit["state"] not in {"PREPARED", "VALIDATED", "RECOVERY_REQUIRED"}:

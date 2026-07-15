@@ -277,11 +277,18 @@ def create_app(config: RuntimeConfig | None = None) -> FastAPI:
     def query_context(body: QueryContextRequest) -> ContextQueryResult:
         return services.query_context(body)
 
-    @app.get(f"{API_PREFIX}/projects/{{project_id}}/entities/{{entity_id}}", response_model=EntityResult, operation_id="queryEntity", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})
+    @app.get(f"{API_PREFIX}/projects/{{project_id}}/entities/{{entity_id}}", response_model=EntityResult, operation_id="queryEntity", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}})
     def query_entity(project_id: str, entity_id: str, at_revision: Annotated[int | None, Query(ge=0)] = None, include_history: bool = False) -> EntityResult:
+        if at_revision is not None:
+            # RC-2B Batch 1 establishes revision existence only. It must not
+            # turn the current projection into pseudo-history; Batch 2+ must
+            # complete typed coverage before an exact historical read exists.
+            raise ConflictError(
+                "HISTORY_NOT_IMPLEMENTED",
+                "exact historical state is not implemented; omit at_revision for a latest-only read",
+                details={"requested_revision": at_revision, "batch": "RC-2B1"},
+            )
         result = services.entity(project_id, entity_id, include_history)
-        if at_revision is not None and at_revision > result.revision:
-            raise NotFoundError("REVISION_NOT_FOUND", f"revision {at_revision} does not exist")
         return result
 
     @app.get(f"{API_PREFIX}/projects/{{project_id}}/chapters/{{chapter_number}}", response_model=ChapterArtifactResult, operation_id="getFinalizedChapter", dependencies=[Depends(authorize)], responses={404: {"model": ErrorResponse}})

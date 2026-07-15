@@ -136,9 +136,48 @@ manifest = (ROOT / "inkos" / "package.json").read_text(encoding="utf-8")
 if re.search(r'"(?:webnovel-writer|claude-plugin)"\s*:', manifest):
     fail("G11_NO_DUPLICATE_DASHBOARD_OR_HOOK", ROOT / "inkos" / "package.json", "upstream dependency")
 
+# RC-2B1: revision membership and allocation have one deep Runtime module.
+allocator_path = RUNTIME / "revision_manifests.py"
+allocator_text = allocator_path.read_text(encoding="utf-8")
+chapter_text = (RUNTIME / "chapter_commits.py").read_text(encoding="utf-8")
+migrations_text = (RUNTIME / "migrations.py").read_text(encoding="utf-8")
+migration_jobs_text = (RUNTIME / "migration_jobs.py").read_text(encoding="utf-8")
+api_text = (RUNTIME / "api.py").read_text(encoding="utf-8")
+
+if "class ProjectRevisionAllocator" not in allocator_text or "class RevisionManifestRepository" not in allocator_text:
+    fail("G12_SINGLE_REVISION_ALLOCATOR", allocator_path, "allocator/repository interface missing")
+for path in files(RUNTIME, (".py",)):
+    text = path.read_text(encoding="utf-8")
+    if path.name not in {"revision_manifests.py", "migration_jobs.py"} and re.search(r"UPDATE\s+projects\s+SET\s+revision", text, re.I):
+        fail("G12_SINGLE_REVISION_ALLOCATOR", path, "direct project revision update")
+    if path.name != "revision_manifests.py" and re.search(r"expected_revision\s*\+\s*1|revision\s*\+=\s*1", text):
+        fail("G12_SINGLE_REVISION_ALLOCATOR", path, "independent revision arithmetic")
+if chapter_text.count("self.revision_allocator.execute(") != 2:
+    fail("G13_AUTHORITY_WRITES_USE_ALLOCATOR", RUNTIME / "chapter_commits.py", "chapter and command seams must both allocate")
+for name in ("reviews.py", "outbox.py", "operations.py", "observability.py", "services.py"):
+    if "ProjectRevisionAllocator" in (RUNTIME / name).read_text(encoding="utf-8"):
+        fail("G14_NEUTRAL_OPERATIONS_NO_ALLOCATOR", RUNTIME / name, "revision-neutral module imports allocator")
+if "ProjectRevisionAllocator" in chapter_text[chapter_text.index("    def replay("):chapter_text.index("    def append_operator_events(")]:
+    fail("G14_NEUTRAL_OPERATIONS_NO_ALLOCATOR", RUNTIME / "chapter_commits.py", "replay calls allocator")
+for token in ("project_revisions_immutable_update", "project_revisions_immutable_delete", "RAISE(ABORT, 'project revision manifests are immutable')"):
+    if token not in migrations_text:
+        fail("G15_MANIFEST_IMMUTABLE", RUNTIME / "migrations.py", token)
+manifest_schema = migrations_text[migrations_text.index("CREATE TABLE project_revisions"):migrations_text.index("CREATE UNIQUE INDEX project_revisions_commit_idx")]
+for token in ("body_text", "payload_json", "state_mutation_proposal_json"):
+    if token in manifest_schema:
+        fail("G16_MANIFEST_NOT_STATE_OR_PAYLOAD", RUNTIME / "migrations.py", token)
+if "revision += 1" in migration_jobs_text or "applied_revision,aggregate_type" not in migration_jobs_text or "SCHEMA_VERSION, now, None" not in migration_jobs_text:
+    fail("G17_MIGRATION_NO_FAKE_INTERMEDIATE_HISTORY", RUNTIME / "migration_jobs.py", "legacy rows must not allocate revisions")
+if "HISTORY_NOT_IMPLEMENTED" not in api_text:
+    fail("G18_NO_PSEUDO_HISTORICAL_API", RUNTIME / "api.py", "at_revision must fail closed in Batch 1")
+if "def append_operator_events" not in chapter_text or "self.revision_allocator.execute(" not in chapter_text[chapter_text.index("    def append_operator_events("):chapter_text.index("    def apply_typed_diff(")]:
+    fail("G19_OPERATOR_APPEND_USES_ALLOCATOR", RUNTIME / "chapter_commits.py", "operator append bypasses allocator")
+if "ordered_event_ids" not in allocator_text or "artifact_references" not in allocator_text or "canonical_manifest_hash" not in allocator_text:
+    fail("G20_MANIFEST_OWNERSHIP_INDEX_ONLY", allocator_path, "membership/hash index fields missing")
+
 if failures:
     print("Phase 8 architecture gates FAILED")
     for item in failures:
         print(f"- {item}")
     raise SystemExit(1)
-print("Phase 8 architecture gates passed (10 authority rules + duplicate-dashboard isolation).")
+print("Architecture gates passed (RC-1 authority rules + RC-2B1 revision-manifest rules).")

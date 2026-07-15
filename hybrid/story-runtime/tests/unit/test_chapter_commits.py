@@ -17,6 +17,7 @@ from story_runtime.contracts import (
     PrepareChapterRequest,
     ReplayProjectionsRequest,
     StoryEventInput,
+    TypedDiffCommandRequest,
     ValidateChapterArtifactsRequest,
 )
 from story_runtime.database import Database
@@ -24,6 +25,7 @@ from story_runtime.errors import ConflictError
 from story_runtime.errors import DatabaseUnavailableError
 from story_runtime.repository import StoryRepository
 from story_runtime.services import RuntimeServices
+from story_runtime.revision_manifests import RevisionManifestRepository
 
 
 def runtime_service(tmp_path):
@@ -95,6 +97,14 @@ def test_state_machine_finalizes_atomically_and_retries_response_loss(tmp_path):
     assert committed.state == "FINALIZED"
     assert committed.resulting_revision == 1
     assert committed.event_count == 3
+    manifest = RevisionManifestRepository(database).get("runtime-book", 1)
+    assert manifest is not None
+    assert manifest.transition_kind == "chapter_finalize"
+    assert manifest.commit_id == str(committed.commit_id)
+    assert manifest.event_count == 3
+    assert manifest.artifact_references == (f"chapter:{committed.commit_id}",)
+    assert manifest.artifact_hashes == (f"sha256:{committed.artifact_sha256}",)
+    assert manifest.hash_valid is True
 
     replayed = service.commit(CommitChapterRequest(
         request_id=uuid4(), idempotency_key="chapter-commit-key-0001", project_id="runtime-book",
@@ -107,8 +117,23 @@ def test_state_machine_finalizes_atomically_and_retries_response_loss(tmp_path):
     with database.connect() as conn:
         assert conn.execute("SELECT revision FROM projects WHERE project_id='runtime-book'").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM story_events WHERE project_id='runtime-book'").fetchone()[0] == 3
+        assert conn.execute("SELECT COUNT(*) FROM project_revisions WHERE project_id='runtime-book'").fetchone()[0] == 2
         states = [row[0] for row in conn.execute("SELECT to_state FROM commit_transitions WHERE commit_id=? ORDER BY transition_id", (str(committed.commit_id),))]
         assert states == ["PREPARED", "VALIDATED", "PERSISTING", "COMMITTED", "PROJECTING", "FINALIZED"]
+
+
+def test_zero_event_chapter_gets_one_compatibility_manifest_and_one_revision(tmp_path):
+    database, service = runtime_service(tmp_path)
+    create_project(service)
+    no_events = artifacts().model_copy(update={"events": []})
+    _, _, committed = lifecycle(service, no_events)
+    manifest = RevisionManifestRepository(database).get("runtime-book", 1)
+
+    assert committed.resulting_revision == 1
+    assert manifest is not None
+    assert manifest.event_count == 0
+    assert manifest.first_event_sequence is None
+    assert manifest.event_schema_version == "legacy-unversioned"
 
 
 def test_same_key_different_prepare_payload_conflicts(tmp_path):
@@ -364,6 +389,93 @@ def test_operator_append_requires_scope_and_is_idempotent(tmp_path):
     assert second.replayed is True
     with database.connect() as conn:
         assert conn.execute("SELECT COUNT(*) FROM story_events WHERE project_id='runtime-book'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM project_revisions WHERE project_id='runtime-book'").fetchone()[0] == 2
+    manifest = RevisionManifestRepository(database).get("runtime-book", 1)
+    assert manifest is not None
+    assert manifest.transition_kind == "domain_command"
+    assert manifest.event_count == 1
+
+
+def test_typed_diff_uses_one_manifest_for_multiple_mutations_and_retries(tmp_path):
+    database, service = runtime_service(tmp_path)
+    create_project(service)
+    request = TypedDiffCommandRequest(
+        request_id=uuid4(), idempotency_key="typed-diff-command-key-0001",
+        project_id="runtime-book", schema_version="story-runtime/v1", expected_revision=0,
+        actor="human-editor", reason="manual canonical correction",
+        events=[
+            StoryEventInput(
+                event_type="fact.upsert", subject="world", aggregate_type="fact",
+                aggregate_id="rule-light", payload={"predicate": "world.light", "value": "dim"}, evidence=[],
+            ),
+            StoryEventInput(
+                event_type="timeline.upsert", subject="timeline", aggregate_type="timeline",
+                aggregate_id="t-1", payload={"sequence_key": "001", "title": "Dusk"}, evidence=[],
+            ),
+        ],
+    )
+    first = service.apply_typed_diff(request)
+    retry = service.apply_typed_diff(request.model_copy(update={"request_id": uuid4()}))
+
+    assert first.revision == 1
+    assert retry.replayed is True
+    manifest = RevisionManifestRepository(database).get("runtime-book", 1)
+    assert manifest is not None
+    assert manifest.transition_kind == "domain_command"
+    assert manifest.event_count == 2
+    assert len(RevisionManifestRepository(database).list("runtime-book")) == 2
+    with pytest.raises(ConflictError, match="different operator events"):
+        service.apply_typed_diff(request.model_copy(update={
+            "request_id": uuid4(), "reason": "changed retry payload",
+        }))
+    assert len(RevisionManifestRepository(database).list("runtime-book")) == 2
+
+
+def test_chapter_and_typed_diff_with_same_expected_revision_have_one_manifest_winner(tmp_path):
+    database, service = runtime_service(tmp_path)
+    create_project(service)
+    chapter = artifacts()
+    prepared = service.prepare(PrepareChapterRequest(
+        request_id=uuid4(), idempotency_key="mixed-chapter-command-0001", project_id="runtime-book",
+        schema_version="story-runtime/v1", expected_revision=0, chapter_number=1,
+        intent={}, base_context_revision=0,
+    ))
+    validated = service.validate(ValidateChapterArtifactsRequest(
+        request_id=uuid4(), idempotency_key="mixed-chapter-command-0001", project_id="runtime-book",
+        schema_version="story-runtime/v1", expected_revision=0,
+        prepare_id=prepared.prepare_id, artifacts=chapter,
+    ))
+    chapter_request = CommitChapterRequest(
+        request_id=uuid4(), idempotency_key="mixed-chapter-command-0001", project_id="runtime-book",
+        schema_version="story-runtime/v1", expected_revision=0, prepare_id=prepared.prepare_id,
+        validation_token=validated.validation_token, artifacts=chapter,
+    )
+    diff_request = TypedDiffCommandRequest(
+        request_id=uuid4(), idempotency_key="mixed-typed-command-0001", project_id="runtime-book",
+        schema_version="story-runtime/v1", expected_revision=0, actor="human", reason="concurrent edit",
+        events=[StoryEventInput(
+            event_type="fact.upsert", subject="world", aggregate_type="fact", aggregate_id="mixed-fact",
+            payload={"predicate": "world.concurrent", "value": True}, evidence=[],
+        )],
+    )
+
+    def run(call):
+        try:
+            return call()
+        except ConflictError as exc:
+            return exc
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(run, [
+            lambda: service.commit(chapter_request),
+            lambda: service.apply_typed_diff(diff_request),
+        ]))
+
+    assert sum(not isinstance(outcome, ConflictError) for outcome in outcomes) == 1
+    manifests = RevisionManifestRepository(database).list("runtime-book")
+    assert [manifest.revision for manifest in manifests] == [0, 1]
+    with database.read() as conn:
+        assert conn.execute("SELECT revision FROM projects WHERE project_id='runtime-book'").fetchone()[0] == 1
 
 
 def test_sqlite_lock_returns_retryable_error(tmp_path):
@@ -383,6 +495,33 @@ def test_sqlite_lock_returns_retryable_error(tmp_path):
     finally:
         conn.rollback()
         blocker.__exit__(None, None, None)
+
+
+def test_locked_authority_command_consumes_no_manifest_or_revision_and_retries_cleanly(tmp_path):
+    database, service = runtime_service(tmp_path)
+    create_project(service)
+    request = TypedDiffCommandRequest(
+        request_id=uuid4(), idempotency_key="locked-authority-command-0001",
+        project_id="runtime-book", schema_version="story-runtime/v1", expected_revision=0,
+        actor="human", reason="locked writer retry",
+        events=[StoryEventInput(
+            event_type="fact.upsert", subject="world", aggregate_type="fact", aggregate_id="lock-fact",
+            payload={"predicate": "world.lock", "value": "released"}, evidence=[],
+        )],
+    )
+    blocker = database.connect()
+    conn = blocker.__enter__()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(DatabaseUnavailableError):
+            service.apply_typed_diff(request)
+    finally:
+        conn.rollback()
+        blocker.__exit__(None, None, None)
+
+    assert [manifest.revision for manifest in RevisionManifestRepository(database).list("runtime-book")] == [0]
+    assert service.apply_typed_diff(request.model_copy(update={"request_id": uuid4()})).revision == 1
+    assert [manifest.revision for manifest in RevisionManifestRepository(database).list("runtime-book")] == [0, 1]
 
 
 def test_doctor_distinguishes_pending_commit_and_outbox(tmp_path):
