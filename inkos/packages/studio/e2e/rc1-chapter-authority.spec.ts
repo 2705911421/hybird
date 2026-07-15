@@ -82,8 +82,11 @@ test.describe("RC-1 Studio Chromium authority matrix", () => {
       await expect(page.getByRole("button", { name: /write next/i })).toHaveCount(0);
 
       recover();
+      await expect.poll(async () => {
+        try { return (await fetch("http://127.0.0.1:47931/health")).ok; } catch { return false; }
+      }).toBe(true);
       await page.getByTestId("runtime-retry").click();
-      await expect(page.getByTestId("runtime-count")).toHaveText("3");
+      await expect(page.getByTestId("runtime-count")).toHaveText("3", { timeout: 30_000 });
       await expect(page.getByTestId("runtime-revision")).toHaveText("7");
       await expect(page.getByText("Runtime Chapter 4")).toHaveCount(0);
     });

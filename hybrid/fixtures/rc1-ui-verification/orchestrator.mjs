@@ -139,7 +139,16 @@ function json(res, status, value) {
 export function startRuntimeFixtureServer({ port = RUNTIME_PORT, controlPath }) {
   const server = createServer(async (req, res) => {
     const fault = await readFault(controlPath);
-    if (fault === "timeout") return;
+    if (fault === "timeout") {
+      // The product deadline is 300 ms. Finish the deliberately late fixture
+      // response afterwards so the runner does not retain a poisoned socket.
+      setTimeout(() => {
+        if (!res.destroyed && !res.writableEnded) {
+          json(res, 504, { error: { code: "TIMEOUT", message: "Runtime fixture responded after the client deadline" } });
+        }
+      }, 750);
+      return;
+    }
     if (fault === "authorization") return json(res, 401, { error: { code: "UNAUTHORIZED", message: "Runtime authorization failed" } });
     if (fault === "db_locked") return json(res, 423, { error: { code: "DATABASE_LOCKED", message: "Runtime database is locked" } });
 
