@@ -41,10 +41,10 @@
 | YAML parse | PASS |
 | local preflight | PASS（不作为最终 release 证据） |
 | clean-commit local regression | PASS：`b95298f36c44f447ce5a5d7d10c46d97e8767935`，全部 full/targeted/build gates exit 0 |
-| default-branch `RC-1 Required Gate` actual run | PENDING |
+| default-branch `RC-1 Required Gate` actual run | PASS：[`29389654294`](https://github.com/2705911421/hybird/actions/runs/29389654294)，head `2e12ff61f96ee54004effaa75715f776591d48fb` |
 | branch protection | NOT ENABLED；需管理员操作 |
 
-因此当前 F-002 为 **PARTIAL**。只有默认分支最终提交的实际 run 成功后，workflow/release 部分才能标记 CLOSED；branch protection 状态仍必须如实保留为管理员待办。
+因此 workflow/release 部分的 F-002 为 **CLOSED**。branch protection 仍是已明确记录的管理员待办，不能宣称已启用。
 
 ## First default-branch attempt and correction
 
@@ -55,3 +55,7 @@ Run [`29388494342`](https://github.com/2705911421/hybird/actions/runs/2938849434
 Run [`29388771345`](https://github.com/2705911421/hybird/actions/runs/29388771345) 的 Windows、Ubuntu、macOS jobs 全绿，但 Chromium fresh checkout 在启动 Vite 前没有 Core build artifact，无法解析 Core export，aggregate 继续失败。提交 `6df3c5e02931ba51f7970914a7d8ee61604fdaed` 把 `pnpm --filter @actalk/inkos-core build` 设为 `test:e2e:rc1` 的 lifecycle precondition，并让 workflow 直接运行该固定 Chromium script。clean commit CI 等价命令 13/13 passed（114.48s）；仍需后续 default-branch run 终态 success。
 
 Run [`29389202699`](https://github.com/2705911421/hybird/actions/runs/29389202699) 中三 OS 与 specialized suites 均成功；Chromium 为 12/13，唯一失败是 timeout fault 恢复阶段的悬挂 fixture socket。提交 `d3f55fd290b7ff61abd554c19b4434785a9c0a70` 保留 300ms 产品 timeout/fail-closed 判据，让故意迟到的 fixture response 在 750ms 后结束，并在 Retry 前轮询 Runtime health。clean commit 上 Chromium 13/13 与 TUI 13/13 通过（组合 140.66s）。仍需新的 default-branch aggregate success。
+
+## Successful default-branch gate
+
+Run [`29389654294`](https://github.com/2705911421/hybird/actions/runs/29389654294) 在默认分支 head `2e12ff61f96ee54004effaa75715f776591d48fb` 上终态 success。Windows、Ubuntu、macOS cross-platform jobs、Specialized authority suites、Chromium UI black-box 与 blocking aggregate `RC-1 Required Gate` 全部 success。release workflow 对同一 reusable gate 的依赖保持有效。

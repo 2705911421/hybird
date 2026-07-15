@@ -8,11 +8,11 @@
 | Finding | 状态 | 判据 |
 | --- | --- | --- |
 | F-001 | CLOSED | Runtime-authority Writer recent narrative、正文集合与 revision 均来自 Runtime；A-F red-team 与 architecture gate 保持通过。 |
-| F-002 | PARTIAL | 正式三 OS blocking workflow 与 release 依赖已提交；clean commit 本地全回归通过，仍须默认分支实际 run 成功后关闭。 |
+| F-002 | CLOSED | 正式三 OS blocking workflow、specialized/Chromium aggregate 与 release 依赖已提交；默认分支 run 29389654294 实际成功。 |
 | F-003 | CLOSED | Studio Chromium 13 个浏览器黑盒场景和 TUI 13 个交互场景覆盖 A-F、七类 fault 与恢复，无 local fallback。 |
 | F-004 | CLOSED | Runtime/legacy/importer mode-specific prompt 已修正并由 36 个 prompt 测试覆盖。 |
 
-在默认分支的 `RC-1 Required Gate` 对最终提交实际成功前，整体结论保持：**RC-1D REMAINS BLOCKED**。
+F-001、F-002、F-003、F-004 均 CLOSED；所有 RC-1 完成条件满足。
 
 ## F-004 关闭证据
 
@@ -28,7 +28,7 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 详细矩阵见 `RC-1-UI-BLACKBOX-MATRIX.md`。
 
-## F-002 实现与剩余外部验证
+## F-002 关闭证据
 
 `.github/workflows/rc1-chapter-authority.yml` 现在是可复用的 `RC-1 Gate`，在 push、pull_request、workflow_call 上运行 Windows/Ubuntu/macOS，并包含 blocking aggregate `RC-1 Required Gate`。关键 jobs 均无 `continue-on-error`。`.github/workflows/release.yml` 先调用该 workflow，所有 release artifact jobs 都 `needs: rc1-gate`。
 
@@ -59,8 +59,9 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 - clean implementation commit：`b95298f36c44f447ce5a5d7d10c46d97e8767935`
 - clean-commit local gate：`PASS`
-- default-branch GitHub Actions run：`PENDING`
-- final closeout commit：`PENDING`
+- default-branch GitHub Actions run：[`29389654294`](https://github.com/2705911421/hybird/actions/runs/29389654294)，`PASS`
+- verified default-branch head：`2e12ff61f96ee54004effaa75715f776591d48fb`
+- final report-only closeout commit：以仓库最终 `HEAD` 为准
 
 ## 默认分支 CI 修复记录
 
@@ -72,10 +73,17 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 第三次默认分支 run [`29389202699`](https://github.com/2705911421/hybird/actions/runs/29389202699) 的三 OS 与 specialized jobs 全绿；Chromium 12/13，timeout fault 恢复时 fixture 的永不结束 response 污染 CI HTTP 连接，10s 内没有呈现恢复数据，aggregate 再次失败。提交 `d3f55fd290b7ff61abd554c19b4434785a9c0a70` 仍让客户端在 300ms fail closed，但在 750ms 后结束迟到 fixture response，并在 UI Retry 前确认 Runtime health 恢复。该 clean commit 完整 Chromium 13/13 与 TUI 13/13 通过，组合 exit 0，140.66s。后续默认分支 run 仍须 actual success。
 
+第四次默认分支 run [`29389654294`](https://github.com/2705911421/hybird/actions/runs/29389654294) 对 head `2e12ff61f96ee54004effaa75715f776591d48fb` 实际成功：Windows、Ubuntu、macOS、Specialized authority suites、Chromium UI black-box 与 `RC-1 Required Gate` 全部 success。F-002 至此 CLOSED。
+
 ## 禁止项核对
 
 未修改历史 Runtime event/revision，未重写 Studio，未修改章节事务，未新增 authority mode，未恢复 shadow writing，未降低 Runtime unavailable fail-closed 标准，未开始 RC-2。
 
-## 最终放行条件
+## 最终结论
 
-只有 clean commit 完整回归通过、工作区 clean、最终提交已推送且默认分支 `RC-1 Required Gate` 实际成功，F-002 才可改为 CLOSED，并输出 `RC-1D COMPLETE / READY FOR RC-1 FINAL GATE`。否则保持 `RC-1D REMAINS BLOCKED`。
+```text
+RC-1D COMPLETE
+READY FOR RC-1 FINAL GATE
+```
+
+到此停止，未开始 RC-2。
