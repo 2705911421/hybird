@@ -28,6 +28,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "pretest:e2e:rc1": "pnpm --filter @actalk/inkos-core build",
     "test:e2e:rc1": "playwright test --config playwright.rc1.config.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },

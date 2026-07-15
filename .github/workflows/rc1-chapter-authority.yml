@@ -127,7 +127,7 @@ jobs:
         run: pnpm --filter @actalk/inkos-studio exec playwright install --with-deps chromium
         working-directory: inkos
       - name: Playwright Chromium RC-1 A-F and fault matrix
-        run: pnpm --filter @actalk/inkos-studio test:e2e:rc1 -- --project=chromium
+        run: pnpm --filter @actalk/inkos-studio test:e2e:rc1
         working-directory: inkos
 
   rc1-required-gate:
