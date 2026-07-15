@@ -47,9 +47,6 @@ bookCommand
       }
 
       const config = await loadConfig();
-      if (config.storyRuntime.mode !== "story-runtime") {
-        throw new Error("Runtime authority requires storyRuntime.mode to be story-runtime.");
-      }
       const now = new Date().toISOString();
       const book: BookConfig = {
         id: bookId,

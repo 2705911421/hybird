@@ -42,12 +42,16 @@ import { parsePendingHooksMarkdown } from "../utils/memory-retrieval.js";
 import { analyzeHookHealth } from "../utils/hook-health.js";
 import { buildEnglishVarianceBrief } from "../utils/long-span-fatigue.js";
 import {
+  renderWriterRecentNarrative,
+  type WriterNarrativeContext,
+} from "../writer-narrative-context.js";
+import {
   buildNarrativeIntentBrief,
   renderMemoAsNarrativeBlock,
   renderNarrativeSelectedContext,
   sanitizeNarrativeEvidenceBlock,
 } from "../utils/narrative-control.js";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const LEGACY_WRITER_CONTEXT_BUDGET = {
@@ -82,6 +86,7 @@ export interface WriteChapterInput {
   readonly lengthSpec?: LengthSpec;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
+  readonly narrativeContext: WriterNarrativeContext;
 }
 
 export interface SettleChapterStateInput {
@@ -95,6 +100,7 @@ export interface SettleChapterStateInput {
   readonly contextPackage?: ContextPackage;
   readonly ruleStack?: RuleStack;
   readonly validationFeedback?: string;
+  readonly narrativeContext: WriterNarrativeContext;
 }
 
 export interface TokenUsage {
@@ -154,7 +160,7 @@ export class WriterAgent extends BaseAgent {
     const placeholder = "(文件尚未创建)";
     const [
       storyBible, volumeOutline, styleGuide, currentState, ledger, hooks,
-      chapterSummaries, subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
+      subplotBoard, emotionalArcs, characterMatrix, styleProfileRaw,
       parentCanon, fanficCanonRaw,
     ] = await Promise.all([
         readStoryFrame(bookDir, placeholder),
@@ -167,7 +173,6 @@ export class WriterAgent extends BaseAgent {
         readCurrentStateWithFallback(bookDir, placeholder),
         this.readFileOrDefault(join(bookDir, "story/particle_ledger.md")),
         this.readFileOrDefault(join(bookDir, "story/pending_hooks.md")),
-        this.readFileOrDefault(join(bookDir, "story/chapter_summaries.md")),
         this.readFileOrDefault(join(bookDir, "story/subplot_board.md")),
         this.readFileOrDefault(join(bookDir, "story/emotional_arcs.md")),
         readCharacterContext(bookDir, placeholder),
@@ -176,9 +181,12 @@ export class WriterAgent extends BaseAgent {
         this.readFileOrDefault(join(bookDir, "story/fanfic_canon.md")),
       ]);
 
-    const recentChapters = await this.loadRecentChapters(bookDir, chapterNumber);
-    // Load more chapters for dialogue fingerprint extraction (voice consistency over longer span)
-    const fingerprintChapters = await this.loadRecentChapters(bookDir, chapterNumber, 5);
+    const recentChapters = renderWriterRecentNarrative({
+      ...input.narrativeContext,
+      recentChapters: input.narrativeContext.recentChapters.slice(-1),
+    });
+    const fingerprintChapters = renderWriterRecentNarrative(input.narrativeContext);
+    const chapterSummaries = this.renderNarrativeChapterSummaries(input.narrativeContext);
 
     // Load genre profile + book rules
     const { profile: genreProfile, body: genreBody } =
@@ -204,6 +212,7 @@ export class WriterAgent extends BaseAgent {
       ? await buildEnglishVarianceBrief({
           bookDir,
           chapterNumber,
+          narrativeChapters: input.narrativeContext.recentChapters,
         })
       : null;
 
@@ -236,6 +245,7 @@ export class WriterAgent extends BaseAgent {
           language: book.language ?? genreProfile.language,
           varianceBrief: englishVarianceBrief?.text,
           selectedEvidenceBlock: this.joinGovernedEvidenceBlocks(governedMemoryBlocks),
+          recentNarrative: fingerprintChapters,
         })
       : (() => {
           // Smart context filtering: inject only relevant parts of truth files
@@ -453,7 +463,6 @@ export class WriterAgent extends BaseAgent {
       currentState,
       ledger,
       hooks,
-      chapterSummaries,
       subplotBoard,
       emotionalArcs,
       characterMatrix,
@@ -463,12 +472,12 @@ export class WriterAgent extends BaseAgent {
       readCurrentStateWithFallback(input.bookDir, "(文件尚未创建)"),
       this.readFileOrDefault(join(input.bookDir, "story/particle_ledger.md")),
       this.readFileOrDefault(join(input.bookDir, "story/pending_hooks.md")),
-      this.readFileOrDefault(join(input.bookDir, "story/chapter_summaries.md")),
       this.readFileOrDefault(join(input.bookDir, "story/subplot_board.md")),
       this.readFileOrDefault(join(input.bookDir, "story/emotional_arcs.md")),
       readCharacterContext(input.bookDir, "(文件尚未创建)"),
       readVolumeMap(input.bookDir, "(文件尚未创建)"),
     ]);
+    const chapterSummaries = this.renderNarrativeChapterSummaries(input.narrativeContext);
 
     const { profile: genreProfile } = await readGenreProfile(this.ctx.projectRoot, input.book.genre);
     const parsedBookRules = await readBookRules(input.bookDir);
@@ -810,6 +819,7 @@ ${lengthRequirementBlock}
     readonly language?: "zh" | "en";
     readonly varianceBrief?: string;
     readonly selectedEvidenceBlock?: string;
+    readonly recentNarrative: string;
   }): string {
     const language = params.language ?? "zh";
     // The user's steering docs (author_intent = long-term direction, current_focus =
@@ -820,7 +830,7 @@ ${lengthRequirementBlock}
       DIRECTION_SOURCES.has(entry.source),
     );
     const otherEntries = params.contextPackage.selectedContext.filter((entry) =>
-      !DIRECTION_SOURCES.has(entry.source),
+      !DIRECTION_SOURCES.has(entry.source) && entry.layer !== "recent_narrative",
     );
     const contextSections = renderNarrativeSelectedContext(otherEntries, language);
     const userDirectionBlock = directionEntries.length > 0
@@ -840,6 +850,9 @@ ${lengthRequirementBlock}
     const selectedEvidenceBlock = params.selectedEvidenceBlock
       ? `\n${sanitizeNarrativeEvidenceBlock(params.selectedEvidenceBlock, language)}\n`
       : "";
+    const recentNarrativeBlock = params.recentNarrative
+      ? `\n## Recent Narrative (revision-bound)\n${params.recentNarrative}\n`
+      : "\n## Recent Narrative (revision-bound)\n(first chapter)\n";
     const chapterContextBlock = this.buildChapterContextBlock(params.externalContext, language);
     const briefNarrative = renderMemoAsNarrativeBlock(params.chapterMemo, params.chapterIntentData, language);
 
@@ -854,6 +867,7 @@ ${briefNarrative}
 ## Selected Context
 ${contextSections || "(none)"}
 ${selectedEvidenceBlock}
+${recentNarrativeBlock}
 
 ## Rule Stack
 - Hard: ${params.ruleStack.sections.hard.join(", ") || "(none)"}
@@ -876,6 +890,7 @@ ${briefNarrative}
 ## 已选上下文
 ${contextSections || "(无)"}
 ${selectedEvidenceBlock}
+${recentNarrativeBlock}
 
 ## 规则栈
 - 硬护栏：${params.ruleStack.sections.hard.join("、") || "(无)"}
@@ -1023,40 +1038,19 @@ ${overrides}\n`;
 - 允许区间：${lengthSpec.softMin}-${lengthSpec.softMax}字`;
   }
 
-  private async loadRecentChapters(
-    bookDir: string,
-    currentChapter: number,
-    count = 1,
-  ): Promise<string> {
-    const chaptersDir = join(bookDir, "chapters");
-    try {
-      const files = await readdir(chaptersDir);
-      const mdFiles = files
-        .filter((f) => f.endsWith(".md") && !f.startsWith("index"))
-        .sort()
-        .slice(-count);
-
-      if (mdFiles.length === 0) return "";
-
-      const contents = await Promise.all(
-        mdFiles.map(async (f) => {
-          const content = await readFile(join(chaptersDir, f), "utf-8");
-          return content;
-        }),
-      );
-
-      return contents.join("\n\n---\n\n");
-    } catch {
-      return "";
-    }
-  }
-
   private async readFileOrDefault(path: string): Promise<string> {
     try {
       return await readFile(path, "utf-8");
     } catch {
       return "(文件尚未创建)";
     }
+  }
+
+  private renderNarrativeChapterSummaries(context: WriterNarrativeContext): string {
+    return context.recentChapters.map((chapter) => {
+      const values = [chapter.chapterNumber, chapter.title, "", chapter.summary, "", "", "", ""];
+      return `| ${values.map((value) => String(value).replace(/\|/g, "\\|")).join(" | ")} |`;
+    }).join("\n");
   }
 
   private renderDeltaSummaryRow(delta: RuntimeStateDelta): string {
@@ -1254,7 +1248,7 @@ ${overrides}\n`;
       return false;
     });
 
-    // Skip only the last chapter (its full text is already in context via loadRecentChapters)
+    // Skip only the last chapter (its full text is already in revision-bound narrative context)
     const filteredRows = matchedRows.filter((row) => {
       const chNumMatch = row.match(/\|\s*(\d+)\s*\|/);
       if (!chNumMatch) return true;

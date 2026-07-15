@@ -57,6 +57,7 @@ import { createSkillRegistry, loadConfiguredCapabilitySkills } from "../skills/i
 import { assertSafeBookId } from "../utils/book-id.js";
 import { PlayStore } from "../play/play-store.js";
 import { isLlmStubEnabled, stubAgentStream } from "./llm-stub.js";
+import { StateManager } from "../state/manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -919,6 +920,9 @@ async function runAgentSessionUnlocked(
   const playWorldExists = sessionKind === "play"
     ? Boolean(await new PlayStore(projectRoot).loadWorld(sessionId))
     : false;
+  const authorityMode = bookId
+    ? (await new StateManager(projectRoot).loadBookConfig(bookId).catch(() => undefined))?.authorityMode ?? "legacy"
+    : undefined;
   const cacheKey = agentCacheKey(projectRoot, sessionId);
 
   // ----- Resolve or create Agent -----
@@ -1000,6 +1004,7 @@ async function runAgentSessionUnlocked(
           requestedIntent,
           playWorldExists,
           skills: skillResolution,
+          authorityMode,
         }),
         tools: createAgentToolsForMode({
           pipeline,

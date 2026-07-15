@@ -12,17 +12,15 @@ export const statusCommand = new Command("status")
       const root = findProjectRoot();
       const state = new StateManager(root);
       const config = await loadConfig({ requireApiKey: false, projectRoot: root });
-      const runtimeClient = config.storyRuntime.mode === "story-runtime" ? new StoryRuntimeClient({
+      const runtimeClient = new StoryRuntimeClient({
         baseUrl: config.storyRuntime.baseUrl,
         timeoutMs: config.storyRuntime.timeoutMs,
         apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
-      }) : undefined;
-      const runtimeHealth = runtimeClient
-        ? await runtimeClient.health().then(
-            (health) => ({ configuredMode: config.storyRuntime.mode, reachable: true, ...health }),
-            (error) => ({ configuredMode: config.storyRuntime.mode, reachable: false, error: String(error) }),
-          )
-        : { configuredMode: config.storyRuntime.mode, reachable: false, disabled: true, readOnly: true };
+      });
+      const runtimeHealth = await runtimeClient.health().then(
+        (health) => ({ configuredMode: config.storyRuntime.mode, reachable: true, ...health }),
+        (error) => ({ configuredMode: config.storyRuntime.mode, reachable: false, error: String(error) }),
+      );
       const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
         storyRuntime: config.storyRuntime,
         runtimeClient,
@@ -82,7 +80,7 @@ export const statusCommand = new Command("status")
           failed,
           degraded,
           ...(migrationHint ? { migrationHint } : {}),
-          ...(runtimeClient && book.authorityMode === "runtime" ? {
+          ...(book.authorityMode === "runtime" ? {
             storyRuntime: await runtimeClient.projectStatus(id),
           } : {}),
           ...(opts.chapters ? {
@@ -119,6 +117,9 @@ export const statusCommand = new Command("status")
                     ? "x"
                     : "~";
               log(`    [${icon}] Ch.${ch.number} "${ch.title}" | ${formatLengthCount(ch.characterCount, countingMode)} | ${ch.status}`);
+              if (ch.auditIssues.length > 0) {
+                for (const issue of ch.auditIssues) log(`      ${issue}`);
+              }
             }
           }
           log("");

@@ -24,6 +24,7 @@ interface ChapterData {
   readonly chapterNumber: number;
   readonly filename: string;
   readonly content: string;
+  readonly chapter?: { readonly bodyChecksum?: string; readonly resultingRevision?: number };
 }
 
 interface ReviewFindingData {
@@ -152,7 +153,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
   const visibleFindings = runtimeReview?.view.findings.filter((finding) => severityFilter === "all" || finding.severity === severityFilter) ?? [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-10 fade-in">
+    <div className="max-w-4xl mx-auto space-y-10 fade-in" data-testid="runtime-chapter-detail" data-runtime-hash={data.chapter?.bodyChecksum ?? ""} data-runtime-revision={data.chapter?.resultingRevision ?? ""}>
       {/* Navigation & Actions */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <nav className="flex items-center gap-2 text-[13px] font-medium text-muted-foreground">

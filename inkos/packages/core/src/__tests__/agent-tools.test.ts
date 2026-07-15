@@ -909,6 +909,18 @@ describe("agent deterministic writing tools", () => {
     }
   });
 
+  it("blocks local story projection reads for Runtime-authority books", async () => {
+    const book = await state.loadBookConfig("harbor");
+    await state.saveBookConfig("harbor", { ...book, authorityMode: "runtime" });
+    await writeFile(join(state.bookDir("harbor"), "story", "local-shadow.md"), "stale local truth", "utf-8");
+    const result = await createReadTool(root).execute("tool-read-runtime-story", { path: "harbor/story/local-shadow.md" });
+    expect(result.content[0]?.type).toBe("text");
+    if (result.content[0]?.type === "text") {
+      expect(result.content[0].text).toContain("RUNTIME_CONTEXT_REQUIRED");
+      expect(result.content[0].text).not.toContain("stale local truth");
+    }
+  });
+
   it("denies direct Agent reads of Runtime databases and migration snapshots", async () => {
     const runtimeDb = join(root, "story.db");
     await writeFile(runtimeDb, "not-a-real-db", "utf-8");

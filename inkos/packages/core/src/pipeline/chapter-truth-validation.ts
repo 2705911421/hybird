@@ -5,6 +5,7 @@ import type { BookConfig } from "../models/book.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { Logger } from "../utils/logger.js";
 import type { LengthLanguage } from "../utils/length-metrics.js";
+import type { WriterNarrativeContext } from "../writer-narrative-context.js";
 import {
   buildStateDegradedPersistenceOutput,
   retrySettlementAfterValidationFailure,
@@ -18,6 +19,7 @@ export async function validateChapterTruthPersistence(params: {
   readonly chapterNumber: number;
   readonly title: string;
   readonly content: string;
+  readonly narrativeContext: WriterNarrativeContext;
   readonly persistenceOutput: WriteChapterOutput;
   readonly auditResult: AuditResult;
   readonly previousTruth: {
@@ -107,6 +109,7 @@ export async function validateChapterTruthPersistence(params: {
       chapterNumber: params.chapterNumber,
       title: params.title,
       content: params.content,
+      narrativeContext: params.narrativeContext,
       reducedControlInput: params.reducedControlInput,
       oldState: params.previousTruth.oldState,
       oldHooks: params.previousTruth.oldHooks,

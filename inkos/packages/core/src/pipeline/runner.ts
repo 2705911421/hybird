@@ -15,7 +15,6 @@ import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
-import { StateValidatorAgent, type ValidationResult, type ValidationWarning } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
 import type { RadarSource } from "../agents/radar-source.js";
 import { readGenreProfile } from "../agents/rules-reader.js";
@@ -33,13 +32,13 @@ import type { ContextCompressionCallback } from "../models/context-compression.j
 import type { StoryRuntimeConfig } from "../story-runtime/schemas.js";
 import { StoryRuntimeClient } from "../story-runtime/client.js";
 import { ChapterApplicationService, ProjectChapterAuthorityResolver } from "../chapter-application-service.js";
+import { ProjectWriterNarrativeContextResolver } from "../writer-narrative-context.js";
 import { buildLengthSpec, countChapterLength, formatLengthCount, isOutsideHardRange, resolveLengthCountingMode, type LengthLanguage } from "../utils/length-metrics.js";
 import { analyzeLongSpanFatigue } from "../utils/long-span-fatigue.js";
 import { buildWritingMethodologySection } from "../utils/writing-methodology.js";
 import {
   isNewLayoutBook,
   readCharacterContext,
-  readStoryFrame,
   readVolumeMap,
 } from "../utils/outline-paths.js";
 import { readFile, readdir, writeFile, mkdir, rename, rm, stat } from "node:fs/promises";
@@ -52,7 +51,6 @@ import {
 import { StoryRuntimeChapterPersistence } from "./chapter-persistence-port.js";
 import { InkOSReviewAdapter, InkOSRevisionAdapter } from "../review-artifacts/adapters.js";
 import { runChapterReviewCycle } from "./chapter-review-cycle.js";
-import { validateChapterTruthPersistence } from "./chapter-truth-validation.js";
 import { loadPersistedPlan, relativeToBookDir, savePersistedPlan } from "./persisted-governed-plan.js";
 
 const SEQUENCE_LEVEL_CATEGORIES = new Set([
@@ -106,6 +104,7 @@ export interface PipelineConfig {
   readonly onContextCompression?: ContextCompressionCallback;
   readonly storyRuntime?: StoryRuntimeConfig;
   readonly unifiedReviewEnabled?: boolean;
+  readonly writerFactory?: (context: AgentContext) => Pick<WriterAgent, "writeChapter">;
 }
 
 export interface TokenUsageSummary {
@@ -236,6 +235,7 @@ export class PipelineRunner {
   private readonly state: StateManager;
   private readonly config: PipelineConfig;
   private readonly chapters: ChapterApplicationService;
+  private readonly writerNarrative: ProjectWriterNarrativeContextResolver;
   private readonly agentClients = new Map<string, LLMClient>();
   private readonly operationContext = new AsyncLocalStorage<{ readonly signal?: AbortSignal }>();
 
@@ -246,6 +246,7 @@ export class PipelineRunner {
       storyRuntime: config.storyRuntime,
       apiToken: config.storyRuntime?.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
     }));
+    this.writerNarrative = new ProjectWriterNarrativeContextResolver(this.state, this.chapters);
   }
 
   async runWithAbortSignal<T>(
@@ -705,10 +706,12 @@ export class PipelineRunner {
   }
 
   async planChapter(bookId: string, context?: string): Promise<PlanChapterResult> {
-    await this.state.ensureControlDocuments(bookId);
     const book = await this.state.loadBookConfig(bookId);
+    if (book.authorityMode !== "runtime") {
+      throw new Error("LEGACY_LONG_FORM_READ_ONLY: migrate this book before planning another chapter.");
+    }
     const bookDir = this.state.bookDir(bookId);
-    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const chapterNumber = (await this.chapters.summary(bookId)).latestChapter + 1;
     const stageLanguage = await this.resolveBookLanguage(book);
     this.logStage(stageLanguage, { zh: "规划下一章意图", en: "planning next chapter intent" });
     const { plan } = await this.createGovernedArtifacts(
@@ -729,10 +732,12 @@ export class PipelineRunner {
   }
 
   async composeChapter(bookId: string, context?: string): Promise<ComposeChapterResult> {
-    await this.state.ensureControlDocuments(bookId);
     const book = await this.state.loadBookConfig(bookId);
+    if (book.authorityMode !== "runtime") {
+      throw new Error("LEGACY_LONG_FORM_READ_ONLY: migrate this book before composing another chapter.");
+    }
     const bookDir = this.state.bookDir(bookId);
-    const chapterNumber = await this.state.getNextChapterNumber(bookId);
+    const chapterNumber = (await this.chapters.summary(bookId)).latestChapter + 1;
     const stageLanguage = await this.resolveBookLanguage(book);
     this.logStage(stageLanguage, { zh: "组装章节运行时上下文", en: "composing chapter runtime context" });
     const { plan, composed } = await this.createGovernedArtifacts(
@@ -893,18 +898,23 @@ export class PipelineRunner {
     const bookDir = this.state.bookDir(bookId);
     if (!runtimeAuthority) await this.assertNoPendingStateRepair(bookId);
     const runtimeConfig = this.config.storyRuntime;
-    if (runtimeAuthority && (!runtimeConfig || runtimeConfig.mode !== "story-runtime")) {
+    if (!runtimeConfig || runtimeConfig.mode !== "story-runtime") {
       throw new Error("Runtime authority requires a configured Story Runtime connection.");
     }
-    const runtimeClient = runtimeAuthority && runtimeConfig
-      ? new StoryRuntimeClient({ baseUrl: runtimeConfig.baseUrl, timeoutMs: runtimeConfig.timeoutMs,
-          apiToken: runtimeConfig.apiTokenEnv ? process.env[runtimeConfig.apiTokenEnv] : undefined })
-      : undefined;
-    const runtimeStatus = runtimeClient ? await runtimeClient.projectStatus(bookId) : undefined;
-    if (runtimeStatus && runtimeStatus.authority_mode !== "runtime") {
+    const runtimeClient = new StoryRuntimeClient({ baseUrl: runtimeConfig.baseUrl, timeoutMs: runtimeConfig.timeoutMs,
+      apiToken: runtimeConfig.apiTokenEnv ? process.env[runtimeConfig.apiTokenEnv] : undefined });
+    await runtimeClient.assertCompatible();
+    const runtimeStatus = await runtimeClient.projectStatus(bookId);
+    if (runtimeStatus.authority_mode !== "runtime") {
       throw new Error(`Story Runtime project "${bookId}" is not Runtime authority.`);
     }
-    const chapterNumber = runtimeStatus ? runtimeStatus.latest_chapter + 1 : await this.state.getNextChapterNumber(bookId);
+    const chapterNumber = runtimeStatus.latest_chapter + 1;
+    const narrativeContext = await this.writerNarrative.load({
+      projectId: bookId,
+      beforeChapter: chapterNumber,
+      expectedRevision: runtimeStatus.revision,
+      limit: 5,
+    });
     const stageLanguage = await this.resolveBookLanguage(book);
     this.logStage(stageLanguage, { zh: "准备章节输入", en: "preparing chapter inputs" });
     const writeInput = await this.prepareWriteInput(
@@ -912,6 +922,7 @@ export class PipelineRunner {
       bookDir,
       chapterNumber,
       externalContext,
+      runtimeStatus.revision,
     );
     const reducedControlInput = writeInput.chapterIntent && writeInput.contextPackage && writeInput.ruleStack
       ? {
@@ -937,12 +948,14 @@ export class PipelineRunner {
     const parsedBookRules = (await readBookRules(bookDir))?.rules ?? null;
 
     // 1. Write chapter
-    const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
+    const writerContext = this.agentCtxFor("writer", bookId);
+    const writer = this.config.writerFactory?.(writerContext) ?? new WriterAgent(writerContext);
     this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
     const output = await writer.writeChapter({
       book,
       bookDir,
       chapterNumber,
+      narrativeContext,
       ...writeInput,
       lengthSpec,
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
@@ -1130,6 +1143,7 @@ export class PipelineRunner {
       chapterContent: finalContent,
       chapterSummary: persistenceOutput.chapterSummary,
       language: pipelineLang,
+      narrativeChapters: narrativeContext.recentChapters,
     });
     auditResult = {
       ...auditResult,
@@ -1156,48 +1170,14 @@ export class PipelineRunner {
     });
     this.logLengthWarnings(lengthWarnings);
 
-    // 4.1 Validate settler output before writing
-    this.logStage(stageLanguage, { zh: "校验真相文件变更", en: "validating truth file updates" });
-    const storyDir = join(bookDir, "story");
-    const [oldState, oldHooks, oldLedger, authorityStoryFrame, authorityBookRules, authorityChapterSummaries] = await Promise.all([
-      readFile(join(storyDir, "current_state.md"), "utf-8").catch(() => ""),
-      readFile(join(storyDir, "pending_hooks.md"), "utf-8").catch(() => ""),
-      readFile(join(storyDir, "particle_ledger.md"), "utf-8").catch(() => ""),
-      readStoryFrame(bookDir).catch(() => ""),
-      readFile(join(storyDir, "book_rules.md"), "utf-8").catch(() => ""),
-      readFile(join(storyDir, "chapter_summaries.md"), "utf-8").catch(() => ""),
-    ]);
-    const validator = new StateValidatorAgent(this.agentCtxFor("state-validator", bookId));
-    const truthValidation = runtimeAuthority ? {
+    // Runtime is the only long-form truth owner. Local truth projections are never
+    // loaded as validation inputs and may be absent.
+    const truthValidation = {
       chapterStatus: null,
       degradedIssues: [] as ReadonlyArray<AuditIssue>,
       persistenceOutput,
       auditResult,
-    } : await validateChapterTruthPersistence({
-      writer,
-      validator,
-      book,
-      bookDir,
-      chapterNumber,
-      title: persistenceOutput.title,
-      content: finalContent,
-      persistenceOutput,
-      auditResult,
-      previousTruth: {
-        oldState,
-        oldHooks,
-        oldLedger,
-      },
-      authorityContext: {
-        storyFrame: authorityStoryFrame,
-        bookRules: authorityBookRules,
-        chapterSummaries: authorityChapterSummaries,
-      },
-      reducedControlInput,
-      language: pipelineLang,
-      logWarn: (message) => this.logWarn(pipelineLang, message),
-      logger: this.config.logger,
-    });
+    };
     let chapterStatus: ChapterPipelineResult["status"] | null = truthValidation.chapterStatus;
     let degradedIssues: ReadonlyArray<AuditIssue> = truthValidation.degradedIssues;
     persistenceOutput = truthValidation.persistenceOutput;
@@ -1252,18 +1232,14 @@ export class PipelineRunner {
 
     // 6. Send notification
     if (this.config.notifyChannels && this.config.notifyChannels.length > 0) {
-      const statusEmoji = resolvedStatus === "state-degraded"
-        ? "🧯"
-        : auditResult.passed ? "✅" : "⚠️";
+      const statusEmoji = auditResult.passed ? "✅" : "⚠️";
       const chapterLength = formatLengthCount(finalWordCount, lengthSpec.countingMode);
       await dispatchNotification(this.config.notifyChannels, {
         title: `${statusEmoji} ${book.title} 第${chapterNumber}章`,
         body: [
           `**${persistenceOutput.title}** | ${chapterLength}`,
           revised ? "📝 已自动修正" : "",
-          resolvedStatus === "state-degraded"
-            ? "状态结算: 已降级保存，需先修复 state 再继续"
-            : `审稿: ${auditResult.passed ? "通过" : "需人工审核"}`,
+          `审稿: ${auditResult.passed ? "通过" : "需人工审核"}`,
           ...auditResult.issues
             .filter((i) => i.severity !== "info")
             .map((i) => `- [${i.severity}] ${i.description}`),
@@ -1706,6 +1682,7 @@ ${matrix}`,
     bookDir: string,
     chapterNumber: number,
     externalContext?: string,
+    expectedRevision?: number,
   ): Promise<Pick<WriteChapterInput, "externalContext" | "chapterIntent" | "chapterMemo" | "chapterIntentData" | "contextPackage" | "ruleStack">> {
     if ((this.config.inputGovernanceMode ?? "v2") === "legacy") {
       return { externalContext };
@@ -1716,7 +1693,7 @@ ${matrix}`,
       bookDir,
       chapterNumber,
       externalContext,
-      { reuseExistingIntentWhenContextMissing: true },
+      { reuseExistingIntentWhenContextMissing: true, expectedRevision },
     );
 
     return {
@@ -1966,6 +1943,7 @@ ${matrix}`,
     externalContext?: string,
     options?: {
       readonly reuseExistingIntentWhenContextMissing?: boolean;
+      readonly expectedRevision?: number;
     },
   ): Promise<{
     plan: PlanChapterOutput;
@@ -1983,8 +1961,9 @@ ${matrix}`,
       compressibleContextCompiler: (request) => composer.compileCompressibleContext(request),
       onContextCompression: this.config.onContextCompression,
       storyRuntime: book.authorityMode === "runtime" && this.config.storyRuntime
-        ? { ...this.config.storyRuntime, mode: "story-runtime", fallbackOnUnavailable: false }
+        ? { ...this.config.storyRuntime, mode: "story-runtime" }
         : this.config.storyRuntime,
+      expectedRevision: options?.expectedRevision,
     });
 
     return { plan, composed };

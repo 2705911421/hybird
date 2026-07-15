@@ -6,7 +6,11 @@ on:
     tags: ["v*"]
 
 jobs:
+  rc1-gate:
+    uses: ./.github/workflows/rc1-chapter-authority.yml
+
   runtime-bundles:
+    needs: rc1-gate
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +45,7 @@ jobs:
             hybrid/story-runtime/story-runtime*.sha256
 
   source-and-legal:
+    needs: rc1-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

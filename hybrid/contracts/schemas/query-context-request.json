@@ -10,6 +10,7 @@
     "project_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "schema_version": {"type": "string", "const": "story-runtime/v1"},
     "chapter_number": {"type": "integer", "minimum": 1},
+    "expected_revision": {"type": ["integer", "null"], "minimum": 0},
     "intent": {"type": "string", "minLength": 1, "maxLength": 10000},
     "entity_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
     "budget": {

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { PipelineRunner, StateManager } from "@actalk/inkos-core";
+import { ChapterApplicationService, PipelineRunner, ProjectChapterAuthorityResolver, StateManager } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, getLegacyMigrationHint, resolveBookId, log, logError } from "../utils.js";
 import {
   formatAutoWriteAlreadyComplete,
@@ -55,7 +55,15 @@ export const autoCommand = new Command("auto")
         log(`[migration] ${migrationHint}`);
       }
 
-      const startChapter = await state.getNextChapterNumber(bookId);
+      if (book.authorityMode !== "runtime") {
+        throw new Error("LEGACY_LONG_FORM_READ_ONLY: migrate this book before batch writing.");
+      }
+      const config = await loadConfig();
+      const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+        storyRuntime: config.storyRuntime,
+        apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+      }));
+      const startChapter = (await chapterService.summary(bookId)).latestChapter + 1;
       if (startChapter > targetChapter) {
         if (opts.json) {
           log(JSON.stringify([], null, 2));
@@ -65,7 +73,6 @@ export const autoCommand = new Command("auto")
         return;
       }
 
-      const config = await loadConfig();
       // `inkos auto` is unattended batch writing, so the audit→revise loop must
       // run inline: force "auto" regardless of book/project reviewMode settings.
       const pipeline = new PipelineRunner(buildPipelineConfig(config, root, {

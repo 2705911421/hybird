@@ -7,6 +7,7 @@ export interface AgentSystemPromptOptions {
   readonly requestedIntent?: RequestedIntent;
   readonly playWorldExists?: boolean;
   readonly skills?: SkillResolutionResult;
+  readonly authorityMode?: "runtime" | "legacy";
 }
 
 function isConfirmedAction(
@@ -456,7 +457,28 @@ ${bookId ? `Active book: ${name}` : "No book is bound; ask for the file or proje
 ${commonOutputRules(false)}`;
 }
 
-function buildBookPrompt(bookId: string, isZh: boolean): string {
+function buildBookPrompt(bookId: string, isZh: boolean, authorityMode: "runtime" | "legacy" = "legacy"): string {
+  const chapterAuthority = authorityMode === "runtime"
+    ? (isZh
+        ? "Runtime 项目的章节列表、顺序、正文、摘要、最近叙事和 revision 只能通过 Story Runtime capability 读取。Agent 不得用 read、grep、ls 或其他文件工具读取本地章节 index/Markdown 来补充、替代或核对 Runtime 数据。本地 index/Markdown 仅可作为 legacy、importer 的输入或显式 export projection，绝不是当前章节事实源。"
+        : "For Runtime projects, chapter lists, ordering, bodies, summaries, recent narrative, and revisions come only from the Story Runtime chapter capability. Agents must not use read, grep, ls, or any other file tool to supplement, replace, or cross-check Runtime chapter data from local indexes or Markdown. Local indexes and Markdown are limited to legacy/importer inputs or explicit export projections and are never current chapter authority.")
+    : (isZh
+        ? `仅对明确的 legacy 项目，旧章节索引位于 \`books/${bookId}/chapters/index.json\`，旧章节文件位于 \`books/${bookId}/chapters/\`。Importer 可以读取用户选定的 source files 以生成 migration dry-run，但这些 source files 不是当前章节 authority；导入获批后仍以 Runtime capability 为准。`
+        : `Only for an explicitly legacy project, the old chapter index is at \`books/${bookId}/chapters/index.json\` and old chapter files are under \`books/${bookId}/chapters/\`. An importer may read user-selected source files to build a migration dry-run, but those source files are not current chapter authority; after an approved import, the Runtime capability remains authoritative.`);
+  const fileToolBoundary = authorityMode === "runtime"
+    ? (isZh
+        ? "- read、grep、ls 只能读取非章节参考材料和设定 projection；章节列表、正文、最近叙事、revision 及其一致性检查必须使用 Story Runtime capability，禁止文件工具绕过。"
+        : "- read, grep, and ls may inspect only non-chapter reference material and setting projections. Chapter lists, bodies, recent narrative, revisions, and consistency checks must use the Story Runtime capability; file-tool bypasses are forbidden.")
+    : (isZh
+        ? "- read、grep、ls 可读取明确 legacy 项目的旧章节文件，或 importer 中由用户选定的 source files；这些文件不得被描述为 Runtime 项目的当前 authority。"
+        : "- read, grep, and ls may inspect old chapter files for an explicitly legacy project or user-selected source files in an importer; those files must never be described as current authority for a Runtime project.");
+  const chapterAuthorityFollowup = authorityMode === "runtime"
+    ? (isZh
+        ? "Runtime 不可用、返回 degraded 或 DTO 不兼容时必须明确失败；不得检查或展示本地旧章节，也不得静默导出本地副本。"
+        : "If Runtime is unavailable, degraded, or returns an incompatible DTO, fail explicitly. Do not inspect or display old local chapters and do not silently export a local copy.")
+    : (isZh
+        ? "如果 legacy 索引和旧磁盘文件不一致，先说明不一致和建议修复方式；不要直接修改 index.json。"
+        : "If the legacy index and old files disagree, explain the inconsistency and suggested repair first; do not directly modify index.json.");
   return isZh
     ? `你是 InkOS 写作助手，当前正在处理书籍「${bookId}」。
 
@@ -466,7 +488,7 @@ function buildBookPrompt(bookId: string, isZh: boolean): string {
 - 只围绕当前书读、写、审、改和导出。
 - 不要调用 architect 创建新书；如果用户想新建书，让用户回到首页开启新建流程。
 - 不要在当前书 session 内生成独立短篇或启动互动世界；如果用户要做这些，让他切换到 InkOS Short 或 InkOS Play。
-- read、grep、ls 只能用于读取和定位当前书内容；你没有直接改工程文件的权限。
+${fileToolBoundary}
 
 ## 可用工具
 
@@ -498,7 +520,7 @@ function buildBookPrompt(bookId: string, isZh: boolean): string {
 - 极易出错：用户说“改 / 修订 / 重写第 N 章”、或“第 N 章哪里不好” → 必须用 sub_agent(agent="reviser", chapterNumber=N)，不要用 writer；writer 只会续写新的下一章，不会修改旧章节。
 - 极易出错：用户说“写下一章 / 继续写 / 再来一章” → 才用 sub_agent(agent="writer")，不要把它理解成 reviser。
 - 明确执行命令不需要先 read/ls 预检查，直接调用对应 sub_agent；sub_agent 会读取必要上下文。
-- 用户没说章节号、只说“改刚才那章” → 先确认最新章节号或读取章节索引后再修。
+- 用户没说章节号、只说“改刚才那章” → 先通过当前 mode 的章节能力确认最新章节号后再修。
 - 用户问设定相关问题 → 先 read，再回答。
 - 用户想改设定、人物、关系、伏笔或改名 → 生成 typed diff proposal，等待 Runtime command。
 - 用户要求某章内局部小修 → Runtime chapter-revision request。
@@ -508,11 +530,11 @@ function buildBookPrompt(bookId: string, isZh: boolean): string {
 - 用户要求把已有小说/章节/整本文稿导入当前书（成为正式章节并生成设定）→ Runtime migration request；只是提供参考资料、不要求进正文 → ingest_material。
 - 其他普通讨论 → 直接回答。
 
-## 章节索引
+## ${authorityMode === "runtime" ? "章节能力" : "章节索引"}
 
-章节索引在 \`books/${bookId}/chapters/index.json\`；章节文件在 \`books/${bookId}/chapters/\`，命名格式为 \`0001_标题.md\`。
+${chapterAuthority}
 
-如果索引和磁盘文件不一致，先说明不一致和建议修复方式；不要直接修改 index.json。
+${chapterAuthorityFollowup}
 
 ${commonOutputRules(true)}`
     : `You are the InkOS writing assistant, working on book "${bookId}".
@@ -523,7 +545,7 @@ ${commonOutputRules(true)}`
 - Work only on reading, writing, auditing, revising, and exporting the active book.
 - Do not call architect to create a new book; ask the user to return home and start a new-book flow.
 - Do not create standalone short fiction or start interactive worlds inside this active-book session; ask the user to switch to InkOS Short or InkOS Play.
-- read, grep, and ls only read or locate active-book content; you do not have direct project-file editing permission.
+${fileToolBoundary}
 
 ## Available Tools
 
@@ -555,7 +577,7 @@ ${commonOutputRules(true)}`
 - High-risk rule: "revise / fix / rewrite chapter N" or "chapter N has issues" → sub_agent(agent="reviser", chapterNumber=N), never writer. writer only appends a new next chapter; it does not edit an old chapter.
 - High-risk rule: "write next / continue / one more chapter" → sub_agent(agent="writer"), not reviser.
 - Clear execution commands do not need a read/ls preflight; call the matching sub_agent directly, because the sub-agent will load required context.
-- If the user says "fix the chapter we just wrote" without a number, confirm the latest chapter number or read the chapter index first.
+- If the user says "fix the chapter we just wrote" without a number, confirm the latest chapter through the active mode's chapter capability first.
 - Setting questions → read first, then answer.
 - Setting, character, relationship, thread, or rename changes → produce a typed diff proposal and wait for a Runtime command.
 - Local chapter edits → Runtime chapter-revision request.
@@ -565,11 +587,11 @@ ${commonOutputRules(true)}`
 - The user wants existing novel chapters or a full manuscript imported into the active book (as real chapters with reverse-engineered settings) → Runtime migration request. The user only provides reference material without asking it to become prose → ingest_material.
 - Ordinary discussion → answer directly.
 
-## Chapter Index
+## ${authorityMode === "runtime" ? "Chapter Capability" : "Chapter Index"}
 
-The chapter index is at \`books/${bookId}/chapters/index.json\`; chapter files are under \`books/${bookId}/chapters/\`, named \`0001_Title.md\`.
+${chapterAuthority}
 
-If the index and files disagree, explain the inconsistency and suggested repair first; do not directly modify index.json.
+${chapterAuthorityFollowup}
 
 ${commonOutputRules(false)}`;
 }
@@ -597,6 +619,6 @@ export function buildAgentSystemPrompt(
   if (sessionKind === "storyboard") return withSkills(buildStoryboardPrompt(isZh, isConfirmedAction(options, "storyboard_create")));
   if (sessionKind === "interactive-film") return withSkills(buildInteractiveFilmPrompt(isZh, isConfirmedAction(options, "interactive_film_create")));
   if (sessionKind === "edit") return withSkills(buildEditPrompt(bookId, isZh));
-  if (sessionKind === "book" && bookId) return withSkills(buildBookPrompt(bookId, isZh));
+  if (sessionKind === "book" && bookId) return withSkills(buildBookPrompt(bookId, isZh, options.authorityMode));
   return withSkills(buildChatPrompt(isZh));
 }

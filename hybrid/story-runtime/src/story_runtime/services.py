@@ -13,6 +13,7 @@ from .contracts import (
 )
 from .database import Database
 from .chapter_commits import ChapterCommitService
+from .errors import ConflictError
 from .repository import StoryRepository
 
 
@@ -64,6 +65,13 @@ class RuntimeServices:
 
     def query_context(self, request: QueryContextRequest) -> ContextQueryResult:
         project = self.repository.get_project(request.project_id)
+        if request.expected_revision is not None and project["revision"] != request.expected_revision:
+            raise ConflictError(
+                "REVISION_CONFLICT",
+                "writer context targets a stale project revision",
+                current_revision=project["revision"],
+                retryable=True,
+            )
         facts = self.repository.query_facts(request.project_id, request.intent, request.entity_ids, request.budget.max_items)
         remaining = max(0, request.budget.max_items - len(facts))
         retrieval = self.repository.rag_search(request.project_id, request.intent, remaining) if request.include_retrieval_candidates else []
@@ -162,6 +170,14 @@ class RuntimeServices:
         # The budget governs the assembled layer payload consumed by generation.
         # Compatibility arrays and conflict diagnostics are reported separately.
         budget_used = (sum(len(item.model_dump_json()) for item in items) + 3) // 4
+        current_revision = self.repository.get_project(request.project_id)["revision"]
+        if current_revision != project["revision"]:
+            raise ConflictError(
+                "REVISION_CONFLICT",
+                "project revision changed while assembling writer context",
+                current_revision=current_revision,
+                retryable=True,
+            )
         return ContextQueryResult(
             request_id=request.request_id, project_id=request.project_id, revision=project["revision"],
             authoritative_facts=returned_facts, retrieval_candidates=returned_retrieval, untrusted_materials=[],

@@ -1,53 +1,35 @@
-# RC-1B 最终章节读取架构
+# RC-1D 最终章节读取架构
 
-## 唯一调用链
+## 唯一产品边界
 
-```text
-Studio / CLI / TUI / pipeline / scheduler / analytics / search / export
-                              |
-                    ChapterApplicationService
-                    /          |            \
-            ChapterReadPort ChapterAnalyticsPort ChapterExportPort
-                              |
-               ProjectChapterAuthorityResolver
-                  /                         \
-StoryRuntimeChapterReadAdapter       LegacyChapterReadAdapter
- authorityMode=runtime only          authorityMode=legacy only
-                  |                         |
- Story Runtime product read API      index.json + Markdown
- Runtime SQLite authority            deprecated/import-only
-```
+Studio、CLI、TUI、pipeline、agents、analytics 与 export 统一依赖 `ChapterApplicationService`。`ProjectChapterAuthorityResolver` 是唯一 authority selector：Runtime project 只返回 `StoryRuntimeChapterReadAdapter`，legacy project 只返回 `LegacyChapterReadAdapter`。
 
-Surface 不决定 authority，不捕获 Runtime error 后重选 adapter。Runtime authority 缺少 Runtime adapter 时 resolver 抛出 `runtime_unavailable`。
+Runtime adapter 的 list/get/summary/search/export/analytics 均执行 Runtime health/version/schema/database handshake。surface 不按 mode 分支，也不在 typed error 后切换 adapter。
 
-## Runtime 产品读取合同
+## Runtime 合同
 
 | 能力 | Endpoint | 一致性 |
-|---|---|---|
-| collection | `GET /api/story-runtime/v1/projects/{project_id}/chapters` | cursor 编码 revision；后续页 revision 改变返回 `REVISION_CHANGED` |
-| detail | `GET /api/story-runtime/v1/projects/{project_id}/chapters/{chapter_number}` | 返回稳定 chapter ID、正文、checksum、commit/revision、时间戳 |
-| aggregate | `GET /api/story-runtime/v1/projects/{project_id}/chapter-aggregate` | 同一读事务得到 count/latest/characters/chapter/volume aggregates |
-| export | `POST /api/story-runtime/v1/projects/{project_id}/chapter-export` | 单一 SQLite 读事务形成 snapshot；可要求 `expected_revision` |
-| search | `GET /api/story-runtime/v1/projects/{project_id}/chapter-search` | 只命中 FINALIZED Runtime rows；正文/checksum 来自 Runtime；cursor 绑定 revision |
+| --- | --- | --- |
+| collection | `GET /api/story-runtime/v1/projects/{id}/chapters` | cursor 绑定 revision；跨页 revision 改变失败 |
+| detail | `GET /api/story-runtime/v1/projects/{id}/chapters/{number}` | finalized body、checksum、commit/revision、timestamps |
+| aggregate | `GET /api/story-runtime/v1/projects/{id}/chapter-aggregate` | count/latest/characters/chapter/volume 在一个读事务中 |
+| search | `GET /api/story-runtime/v1/projects/{id}/chapter-search` | 只命中 finalized Runtime rows；result 绑定 revision |
+| export | `POST /api/story-runtime/v1/projects/{id}/chapter-export` | 单一 SQLite read transaction；支持 expected revision |
 
-所有 collection/export/search 均按 Runtime `chapter_number ASC` 排序，只公开 finalized chapters。`finalized_only=false` 被拒绝。
+## 产品行为
 
-## InkOS application service 职责
+- Studio、CLI、TUI 的 collection/detail/stats 与 Runtime revision 一致。
+- Runtime analytics 的已知基础指标来自 aggregate；Runtime 未提供的 audit 指标返回 `null`，UI/CLI 显示 `N/A`，不伪造 100%。
+- Export formatter 只消费 `ChapterExportPort.exportSnapshot()`，不读 chapter Markdown。
+- 删除或篡改 local projection 不改变 list/detail/search/analytics/export。
+- Runtime unavailable 时读取、Studio `write-next` 与依赖 Runtime 的上下文均 fail closed。
 
-- 将 Pydantic/OpenAPI DTO 经 Zod 校验后映射为统一 TypeScript model。
-- 校验 detail、search 和 export 中每章正文的 SHA-256。
-- 在多页读取中验证 `projectRevision` 不变。
-- 映射 unavailable、timeout、malformed contract、version mismatch、database locked、revision changed、checksum mismatch 和 not found。
-- 为 Runtime analytics 提供 revision-bound 的 count、characters、latest、size、timestamps、volume 基础统计。
-- 为 export formatter 提供 snapshot，而不是文件路径。
+## 已退休路径
 
-## Surface 收敛
-
-- Studio：homepage/book summary、chapter list/detail、editor load、analytics、search、audit/detect body、eval、export 和 recent chapter 通过 service。
-- CLI：`chapter list/show/latest/search`、status/stats/analytics/export/detect/eval/book count 和 Runtime review collection 通过 service。
-- TUI：启动章节 browser summary 和 review chapter reference 使用同一 service；unavailable 作为明确 system message。
-- Core：pipeline、scheduler、book eval、project actions、agent chapter search 和 exporter 使用 ports。
+- `shadow` 不再是正式配置或生产路径。
+- `fallbackOnUnavailable` 已从配置 schema、bootstrap 与 CLI 写入路径移除；迁移器只删除遗留键。
+- Runtime authority 的 local chapter list、analytics reader、export body reader、route-level authority branching 与 silent fallback 均不可达，并由 CI gate 阻止回归。
 
 ## 保留边界
 
-`StateManager.loadChapterIndex()` 仍为 Legacy adapter、import/migration 和 legacy-only 写命令服务。Runtime authority 生产调用点由 CI architecture gate 禁止。Runtime 写/重写/本地编辑命令在接触本地 projection 前 fail closed。
+Legacy adapter 与 migration/import scanner 保留，但只能读取明确 legacy/import source。非长篇模块不在 RC-1 owner 变更范围。详细规则见 `legacy-read-boundary.md`。

@@ -27,7 +27,7 @@ export const analyticsCommand = new Command("analytics")
         log(`  Total chapters: ${analytics.totalChapters}`);
         log(`  Total words: ${analytics.totalWords.toLocaleString()}`);
         log(`  Avg words/chapter: ${analytics.avgWordsPerChapter.toLocaleString()}`);
-        log(`  Audit pass rate: ${analytics.auditPassRate}%`);
+        log(`  Audit pass rate: ${analytics.auditPassRate === null ? "N/A" : `${analytics.auditPassRate}%`}`);
         log("");
 
         if (Object.keys(analytics.statusDistribution).length > 0) {

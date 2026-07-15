@@ -98,31 +98,29 @@ export async function launchTui(
       const book = await state.loadBookConfig(activeBookId);
       if (book.authorityMode === "runtime") {
         const config = await loadProjectConfig(projectRoot);
-        if (config.storyRuntime.mode === "story-runtime") {
-          const client = new RuntimeReviewClient({
-            baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
-            apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
-          });
-          const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, { runtimeClient: client }));
-          const summary = await chapterService.summary(activeBookId);
-          session = appendInteractionMessage(session, {
-            role: "system",
-            content: `Runtime chapters: ${summary.chapterCount}; latest: ${summary.latestChapter}; revision: ${summary.projectRevision}.`,
-            timestamp: Date.now(),
-          });
-          const chapter = summary.latestChapter;
-          if (chapter === 0) throw new Error("No finalized chapters.");
-          const [artifacts, status] = await Promise.all([client.chapterReviews(activeBookId, chapter), client.reviewStatus(activeBookId, chapter)]);
-          if (status.status !== "clear" && status.status !== "unreviewed") {
-            const review = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
-            const note = [
-              `Runtime review for chapter ${chapter}: ${status.status}.`,
-              `Deterministic errors: ${review.deterministicFindings.length}; literary suggestions: ${review.literarySuggestions.length}.`,
-              ...(review.hasStaleEvidence ? ["Evidence is stale; re-audit is required."] : []),
-              ...review.blockingReasons.map((reason) => `Blocked: ${reason}`),
-            ].join("\n");
-            session = appendInteractionMessage(session, { role: "system", content: note, timestamp: Date.now() });
-          }
+        const client = new RuntimeReviewClient({
+          baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
+          apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
+        });
+        const chapterService = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, { runtimeClient: client }));
+        const summary = await chapterService.summary(activeBookId);
+        session = appendInteractionMessage(session, {
+          role: "system",
+          content: `Runtime chapters: ${summary.chapterCount}; latest: ${summary.latestChapter}; revision: ${summary.projectRevision}.`,
+          timestamp: Date.now(),
+        });
+        const chapter = summary.latestChapter;
+        if (chapter === 0) throw new Error("No finalized chapters.");
+        const [artifacts, status] = await Promise.all([client.chapterReviews(activeBookId, chapter), client.reviewStatus(activeBookId, chapter)]);
+        if (status.status !== "clear" && status.status !== "unreviewed") {
+          const review = ReviewArtifactMapper.toUnifiedViewModel(artifacts, status);
+          const note = [
+            `Runtime review for chapter ${chapter}: ${status.status}.`,
+            `Deterministic errors: ${review.deterministicFindings.length}; literary suggestions: ${review.literarySuggestions.length}.`,
+            ...(review.hasStaleEvidence ? ["Evidence is stale; re-audit is required."] : []),
+            ...review.blockingReasons.map((reason) => `Blocked: ${reason}`),
+          ].join("\n");
+          session = appendInteractionMessage(session, { role: "system", content: note, timestamp: Date.now() });
         }
       }
     } catch (error) {

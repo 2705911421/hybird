@@ -1,5 +1,8 @@
 from story_runtime.contracts import ContextLayers, QueryBudget, QueryContextRequest
 import json
+import pytest
+
+from story_runtime.errors import ConflictError
 
 
 def test_context_separates_authority_from_retrieval(runtime):
@@ -71,6 +74,20 @@ def test_long_novel_context_is_budgeted_by_importance_not_full_database(runtime)
     assert len(layered) < 2_000
     assert any(item.importance >= 90 for item in layered)
     assert any(item.content.startswith("Compressed reference:") for item in layered)
+
+
+def test_writer_context_query_is_revision_bound(runtime):
+    _, _, _, services = runtime
+    request = QueryContextRequest(
+        request_id="bb2818cb-3190-46c5-bf8d-2ff96d23c78a",
+        project_id="lighthouse-fixture", schema_version="story-runtime/v1",
+        chapter_number=4, expected_revision=6, intent="next chapter",
+        budget=QueryBudget(max_tokens=1024, max_items=20),
+    )
+    with pytest.raises(ConflictError) as error:
+        services.query_context(request)
+    assert error.value.code == "REVISION_CONFLICT"
+    assert error.value.current_revision == 7
 
 
 def test_projection_failure_is_recoverable(runtime):

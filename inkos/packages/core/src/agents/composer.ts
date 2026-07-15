@@ -38,6 +38,7 @@ export interface ComposeChapterInput {
   readonly onContextCompression?: ContextCompressionCallback;
   readonly storyRuntime?: StoryRuntimeConfig;
   readonly storyRuntimeClient?: StoryRuntimeClient;
+  readonly expectedRevision?: number;
 }
 export interface ContextBudget {
   readonly contextWindowTokens: number;
@@ -79,7 +80,6 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
     timeoutMs: 3_000,
     maxContextTokens: 16_000,
     maxItems: 100,
-    fallbackOnUnavailable: false,
   };
   const runtimeClient = input.storyRuntimeClient ?? new StoryRuntimeClient({
     baseUrl: runtimeConfig.baseUrl,
@@ -98,6 +98,7 @@ export async function composeGovernedChapter(input: ComposeChapterInput): Promis
       plan: input.plan,
       maxTokens: Math.min(runtimeConfig.maxContextTokens, availableTokens),
       maxItems: runtimeConfig.maxItems,
+      expectedRevision: input.expectedRevision,
     },
   });
   const initialContextPackage = selection.contextPackage;

@@ -9,7 +9,7 @@ import {
 
 describe("tui slash autocomplete", () => {
   it("filters slash commands by prefix", () => {
-    expect(getSlashSuggestions("/st", SLASH_COMMANDS)).toEqual(["/status"]);
+    expect(getSlashSuggestions("/st", SLASH_COMMANDS)).toEqual(["/stats", "/status"]);
     expect(getSlashSuggestions("/w", SLASH_COMMANDS)).toEqual(["/write"]);
     expect(getSlashSuggestions("/o", SLASH_COMMANDS)).toEqual([]);
     expect(getSlashSuggestions("/d", SLASH_COMMANDS)).toEqual(["/depth <light|normal|deep>"]);

@@ -2433,12 +2433,14 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     }));
   }
 
-  function chapterReadError(error: unknown): { readonly status: 404 | 409 | 423 | 502 | 503; readonly body: Record<string, unknown> } {
+  function chapterReadError(error: unknown): { readonly status: 401 | 404 | 409 | 423 | 502 | 503; readonly body: Record<string, unknown> } {
     if (error instanceof ChapterApplicationError) {
       if (error.code === "not_found") return { status: 404, body: { error: { code: "CHAPTER_NOT_FOUND", message: error.message } } };
       if (error.code === "database_locked") return { status: 423, body: { runtimeState: "database_locked", error: { code: "DATABASE_LOCKED", message: error.message, retryable: true } } };
       if (error.code === "revision_changed") return { status: 409, body: { runtimeState: "degraded", error: { code: "REVISION_CHANGED", message: error.message, retryable: true }, currentRevision: error.currentRevision } };
       if (error.code === "runtime_contract_mismatch" || error.code === "runtime_version_mismatch") return { status: 502, body: { runtimeState: "version_mismatch", error: { code: error.code.toUpperCase(), message: error.message, retryable: false } } };
+      if (error.code === "runtime_unauthorized") return { status: 401, body: { runtimeState: "unavailable", error: { code: "RUNTIME_UNAUTHORIZED", message: error.message, retryable: false } } };
+      if (error.code === "invalid_authority_mode") return { status: 409, body: { runtimeState: "version_mismatch", error: { code: "INVALID_AUTHORITY_MODE", message: error.message, retryable: false } } };
       if (error.code === "runtime_unavailable" || error.code === "runtime_timeout") return { status: 503, body: { runtimeState: "unavailable", error: { code: error.code.toUpperCase(), message: error.message, retryable: true } } };
     }
     return { status: 503, body: { runtimeState: "degraded", error: { code: "CHAPTER_READ_FAILED", message: error instanceof Error ? error.message : String(error), retryable: false } } };
@@ -2446,9 +2448,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   async function createRuntimeClient(): Promise<StoryRuntimeClient> {
     const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode !== "story-runtime") {
-      throw new ApiError(409, "LEGACY_LONG_FORM_READ_ONLY", "Legacy and shadow projects are read-only; run migration first.");
-    }
     return new StoryRuntimeClient({
       baseUrl: currentConfig.storyRuntime.baseUrl,
       timeoutMs: currentConfig.storyRuntime.timeoutMs,
@@ -2555,11 +2554,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
 
   app.get("/api/v1/story-runtime/status", async (c) => {
     const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode !== "story-runtime") {
-      return c.json({ mode: currentConfig.storyRuntime.mode, enabled: false, readOnly: true, health: null,
-        deprecation: "Legacy and shadow long-form modes are read-only. Run migration dry-run and cut over to Story Runtime.",
-        featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
-    }
     try {
       const client = await createRuntimeClient();
       return c.json({ mode: currentConfig.storyRuntime.mode, enabled: true, health: await client.health(), featureFlags: { panel: runtimePanelEnabled, recovery: runtimeRecoveryEnabled } });
@@ -2570,8 +2564,6 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   });
 
   app.get("/api/v1/story-runtime/projects/:id/status", async (c) => {
-    const currentConfig = await loadCurrentProjectConfig();
-    if (currentConfig.storyRuntime.mode !== "story-runtime") return c.json({ error: "Legacy project is read-only; migrate to Story Runtime." }, 409);
     try {
       const client = await createRuntimeClient();
       return c.json(await client.projectStatus(c.req.param("id")));
@@ -3136,6 +3128,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/books/:id/write-next", async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json<{ wordCount?: number }>().catch(() => ({ wordCount: undefined }));
+
+    try {
+      await (await createChapterService()).summary(id);
+    } catch (error) {
+      const mapped = chapterReadError(error);
+      return c.json(mapped.body, mapped.status);
+    }
 
     broadcast("write:start", { bookId: id });
 

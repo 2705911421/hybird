@@ -411,8 +411,9 @@ export class ContinuityAuditor extends BaseAgent {
       };
     },
   ): Promise<AuditResult> {
+    const runtimeAuthority = await this.isRuntimeAuthorityBook(bookDir);
     const [diskCurrentState, diskLedger, diskHooks, styleGuideRaw, subplotBoard, emotionalArcs, characterMatrix, chapterSummaries, parentCanon, fanficCanon, volumeOutline] =
-      await Promise.all([
+      runtimeAuthority ? Array(11).fill("(文件不存在)") as string[] : await Promise.all([
         // Phase 5 consolidation: derive initial state from roles + seed hooks
         // when current_state.md is still the architect seed placeholder.
         readCurrentStateWithFallback(bookDir, "(文件不存在)"),
@@ -435,7 +436,7 @@ export class ContinuityAuditor extends BaseAgent {
     const hasFanficCanon = fanficCanon !== "(文件不存在)";
 
     // Load last chapter full text for fine-grained continuity checking
-    const previousChapter = await this.loadPreviousChapter(bookDir, chapterNumber);
+    const previousChapter = runtimeAuthority ? "" : await this.loadPreviousChapter(bookDir, chapterNumber);
 
     // Load genre profile and book rules
     const genreId = genre ?? "other";
@@ -443,7 +444,7 @@ export class ContinuityAuditor extends BaseAgent {
       readGenreProfile(this.ctx.projectRoot, genreId),
       readBookLanguage(bookDir),
     ]);
-    const parsedRules = await readBookRules(bookDir);
+    const parsedRules = runtimeAuthority ? null : await readBookRules(bookDir);
     const bookRules = parsedRules?.rules ?? null;
 
     // Fallback: use book_rules body when style_guide.md doesn't exist.
@@ -863,6 +864,15 @@ ${overrides}\n`;
       return await readFile(join(chaptersDir, prevFile), "utf-8");
     } catch {
       return "";
+    }
+  }
+
+  private async isRuntimeAuthorityBook(bookDir: string): Promise<boolean> {
+    try {
+      const raw = JSON.parse(await readFile(join(bookDir, "book.json"), "utf-8")) as { authorityMode?: unknown };
+      return raw.authorityMode === "runtime";
+    } catch {
+      return false;
     }
   }
 

@@ -81,7 +81,6 @@ function buildProjectConfig(projectDir: string, language: "zh" | "en") {
       timeoutMs: 3000,
       maxContextTokens: 16000,
       maxItems: 100,
-      fallbackOnUnavailable: false,
     },
     unifiedReview: { enabled: true },
     daemon: {

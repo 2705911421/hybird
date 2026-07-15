@@ -15,6 +15,11 @@ import {
   retrySettlementAfterValidationFailure,
 } from "../pipeline/chapter-state-recovery.js";
 
+const NARRATIVE_CONTEXT = {
+  projectId: "test-book", authorityMode: "legacy", projectRevision: 0,
+  latestChapter: 0, recentChapters: [], previousChapterEnding: "", source: "legacy",
+} as const;
+
 function createBook(): BookConfig {
   return {
     id: "test-book",
@@ -111,6 +116,7 @@ describe("chapter-state-recovery", () => {
       writer: writer as never,
       validator: validator as never,
       book: createBook(),
+      narrativeContext: NARRATIVE_CONTEXT,
       bookDir: "/tmp/test-book",
       chapterNumber: 3,
       title: "第三章",
@@ -150,6 +156,7 @@ describe("chapter-state-recovery", () => {
         })),
       } as never,
       book: createBook(),
+      narrativeContext: NARRATIVE_CONTEXT,
       bookDir: "/tmp/test-book",
       chapterNumber: 3,
       title: "第三章",

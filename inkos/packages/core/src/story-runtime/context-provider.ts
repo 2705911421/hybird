@@ -16,6 +16,7 @@ export interface ContextProviderRequest {
   readonly plan: PlanChapterOutput;
   readonly maxTokens: number;
   readonly maxItems: number;
+  readonly expectedRevision?: number;
 }
 
 export interface ContextProvider {
@@ -37,10 +38,23 @@ export class StoryRuntimeContextProvider implements ContextProvider {
       intent: buildIntent(request.plan),
       maxTokens: request.maxTokens,
       maxItems: request.maxItems,
+      expectedRevision: request.expectedRevision,
     });
+    if (request.expectedRevision !== undefined && runtime.revision !== request.expectedRevision) {
+      throw new Error(
+        `STORY_RUNTIME_REVISION_CHANGED: expected ${request.expectedRevision}, received ${runtime.revision}.`,
+      );
+    }
+    const recentNarrativeSourceIds = new Set(
+      runtime.layers.recent_narrative.map((item) => item.source.id),
+    );
     const selected = [
       ...localTaskContext(request),
-      ...Object.values(runtime.layers).flat().map(runtimeItemToContextSource),
+      ...Object.entries(runtime.layers)
+        .filter(([layer]) => layer !== "recent_narrative")
+        .flatMap(([, items]) => items
+          .filter((item) => !recentNarrativeSourceIds.has(item.source.id))
+          .map(runtimeItemToContextSource)),
       ...runtime.conflicts.map((conflict): ContextSource => ({
         source: `story-runtime/conflict/${conflict.conflict_id}`,
         reason: `AUTHORITATIVE CONFLICT: ${conflict.message}. Composer did not select a winner.`,
@@ -65,7 +79,7 @@ export class StoryRuntimeContextProvider implements ContextProvider {
 }
 
 export interface ContextSelectionOptions {
-  readonly mode: "legacy" | "story-runtime" | "shadow";
+  readonly mode: "story-runtime";
   readonly runtime?: ContextProvider;
   readonly request: ContextProviderRequest;
 }

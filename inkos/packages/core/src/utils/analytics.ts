@@ -11,7 +11,7 @@ export interface AnalyticsData {
   readonly totalChapters: number;
   readonly totalWords: number;
   readonly avgWordsPerChapter: number;
-  readonly auditPassRate: number;
+  readonly auditPassRate: number | null;
   readonly topIssueCategories: ReadonlyArray<{ readonly category: string; readonly count: number }>;
   readonly chaptersWithMostIssues: ReadonlyArray<{ readonly chapter: number; readonly issueCount: number }>;
   readonly statusDistribution: Record<string, number>;

@@ -91,6 +91,46 @@ def test_export_rejects_revision_and_checksum_mismatch(tmp_path):
         service.export_snapshot("runtime-book", ChapterExportRequest(expected_revision=7))
 
 
+def test_export_holds_one_revision_snapshot_while_a_commit_finishes(tmp_path, monkeypatch):
+    database, service = seeded_runtime(tmp_path)
+    original_project = service._project
+    committed = False
+
+    def project_then_commit(conn, project_id):
+        nonlocal committed
+        project = original_project(conn, project_id)
+        if committed:
+            return project
+        committed = True
+        body = "第四章。新提交。"
+        body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        artifact_hash = hashlib.sha256(b"artifact-4").hexdigest()
+        commit_id = str(uuid4())
+        with database.connect() as writer:
+            writer.execute(
+                "INSERT INTO chapter_commits(commit_id,project_id,chapter_number,request_id,idempotency_key,request_hash,expected_revision,resulting_revision,state,body_sha256,artifact_sha256,schema_version,created_at,updated_at,finalized_at,error_details_json) VALUES (?,?,?,?,?,?,7,8,'FINALIZED',?,?,?,?,?,?, '{}')",
+                (commit_id, "runtime-book", 4, str(uuid4()), "key-4", "hash", body_hash, artifact_hash, "story-runtime/v1", NOW, NOW, NOW),
+            )
+            writer.execute(
+                "INSERT INTO chapter_artifacts(commit_id,project_id,chapter_number,title,body_text,summary,outline_fulfillment_json,review_json,state_mutation_proposal_json,evidence_spans_json,events_json,schema_version,body_sha256,checksum,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (commit_id, "runtime-book", 4, "第4章", body, "摘要4", '{}', "{}", "{}", "[]", "[]", "story-runtime/v1", body_hash, artifact_hash, NOW),
+            )
+            writer.execute("UPDATE projects SET revision=8,latest_chapter=4 WHERE project_id='runtime-book'")
+        return project
+
+    monkeypatch.setattr(service, "_project", project_then_commit)
+    snapshot = service.export_snapshot("runtime-book", ChapterExportRequest(expected_revision=7))
+    assert snapshot.revision == 7
+    assert snapshot.chapter_count == 3
+    assert [chapter.chapter_number for chapter in snapshot.chapters] == [1, 2, 3]
+
+    next_snapshot = ChapterReadService(database).export_snapshot(
+        "runtime-book", ChapterExportRequest(expected_revision=8)
+    )
+    assert next_snapshot.revision == 8
+    assert [chapter.chapter_number for chapter in next_snapshot.chapters] == [1, 2, 3, 4]
+
+
 def test_non_finalized_collection_is_rejected(tmp_path):
     _, service = seeded_runtime(tmp_path)
     with pytest.raises(ConflictError, match="only expose finalized"):

@@ -16,7 +16,6 @@
     "apiTokenEnv": "PHASE6_E2E_TOKEN",
     "timeoutMs": 3000,
     "maxContextTokens": 16000,
-    "maxItems": 100,
-    "fallbackOnUnavailable": false
+    "maxItems": 100
   }
 }

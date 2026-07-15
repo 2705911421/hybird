@@ -9,6 +9,12 @@ const logMock = vi.fn();
 const logErrorMock = vi.fn();
 
 vi.mock("@actalk/inkos-core", () => ({
+  ChapterApplicationService: class {
+    async summary() {
+      return { latestChapter: (await getNextChapterNumberMock()) - 1 };
+    }
+  },
+  ProjectChapterAuthorityResolver: class {},
   PipelineRunner: class {
     writeNextChapter = writeNextChapterMock;
   },
@@ -58,12 +64,14 @@ describe("inkos auto command", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     loadBookConfigMock.mockResolvedValue({
+      authorityMode: "runtime",
       language: "zh",
       writing: { reviewMode: "manual" },
     });
     loadConfigMock.mockResolvedValue({
       llm: {},
       writing: { reviewRetries: 1, reviewMode: "manual" },
+      storyRuntime: { mode: "story-runtime" },
     });
     buildPipelineConfigMock.mockReturnValue({});
   });

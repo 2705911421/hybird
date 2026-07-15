@@ -11,6 +11,11 @@ const ZERO_USAGE = {
   totalTokens: 0,
 } as const;
 
+const NARRATIVE_CONTEXT = {
+  projectId: "test-book", authorityMode: "legacy", projectRevision: 0,
+  latestChapter: 0, recentChapters: [], previousChapterEnding: "", source: "legacy",
+} as const;
+
 function createAuditResult(overrides?: Partial<AuditResult>): AuditResult {
   return {
     passed: true,
@@ -92,6 +97,7 @@ describe("validateChapterTruthPersistence", () => {
       writer,
       validator,
       book: BOOK,
+      narrativeContext: NARRATIVE_CONTEXT,
       bookDir: "/tmp/book",
       chapterNumber: 3,
       title: "Test Chapter",
@@ -139,6 +145,7 @@ describe("validateChapterTruthPersistence", () => {
       writer,
       validator,
       book: BOOK,
+      narrativeContext: NARRATIVE_CONTEXT,
       bookDir: "/tmp/book",
       chapterNumber: 1,
       title: "Test Chapter",
@@ -211,6 +218,7 @@ describe("validateChapterTruthPersistence", () => {
       writer,
       validator,
       book: BOOK,
+      narrativeContext: NARRATIVE_CONTEXT,
       bookDir: "/tmp/book",
       chapterNumber: 4,
       title: "Test Chapter",

@@ -3,6 +3,40 @@ import { buildAgentSystemPrompt } from "../agent/agent-system-prompt.js";
 import { createSkillRegistry } from "../skills/index.js";
 
 describe("buildAgentSystemPrompt", () => {
+  it("uses mode-specific chapter authority instructions", () => {
+    const runtimePrompt = buildAgentSystemPrompt("runtime-book", "en", "book", { authorityMode: "runtime" });
+    const legacyPrompt = buildAgentSystemPrompt("legacy-book", "en", "book", { authorityMode: "legacy" });
+
+    expect(runtimePrompt).toContain("Story Runtime chapter capability");
+    expect(runtimePrompt).toContain("recent narrative, and revisions come only from the Story Runtime chapter capability");
+    expect(runtimePrompt).toContain("file-tool bypasses are forbidden");
+    expect(runtimePrompt).toContain("legacy/importer inputs or explicit export projections");
+    expect(runtimePrompt).not.toContain("books/runtime-book/chapters/index.json");
+    expect(runtimePrompt).not.toContain("If the index and files disagree");
+    expect(runtimePrompt).not.toMatch(/read, grep, and ls (?:only )?read or locate active-book content/);
+    expect(legacyPrompt).toContain("Only for an explicitly legacy project");
+    expect(legacyPrompt).toContain("books/legacy-book/chapters/index.json");
+    expect(legacyPrompt).toContain("user-selected source files in an importer");
+    expect(legacyPrompt).toContain("those source files are not current chapter authority");
+    expect(legacyPrompt).toContain("If the legacy index and old files disagree");
+  });
+
+  it("keeps importer source files non-authoritative without adding an authority mode", () => {
+    const importerPrompt = buildAgentSystemPrompt("import-book", "en", "book", { authorityMode: "legacy" });
+
+    expect(importerPrompt).toContain("user-selected source files to build a migration dry-run");
+    expect(importerPrompt).toContain("source files are not current chapter authority");
+    expect(importerPrompt).toContain("Runtime capability remains authoritative");
+  });
+
+  it("fails closed instead of allowing Runtime chapter reads through file tools", () => {
+    const runtimePrompt = buildAgentSystemPrompt("runtime-book", "en", "book", { authorityMode: "runtime" });
+
+    expect(runtimePrompt).toContain("must not use read, grep, ls, or any other file tool");
+    expect(runtimePrompt).toContain("fail explicitly");
+    expect(runtimePrompt).toContain("Do not inspect or display old local chapters");
+    expect(runtimePrompt).toContain("do not silently export a local copy");
+  });
   describe("mode isolation", () => {
     it("defaults no-book sessions to plain chat, not book creation", () => {
       const prompt = buildAgentSystemPrompt(null, "zh");

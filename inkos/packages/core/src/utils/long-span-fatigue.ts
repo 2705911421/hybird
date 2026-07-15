@@ -5,6 +5,7 @@ import {
   CADENCE_WINDOW_DEFAULTS,
   LONG_SPAN_FATIGUE_THRESHOLDS,
 } from "./cadence-policy.js";
+import type { WriterNarrativeChapter } from "../writer-narrative-context.js";
 
 export interface LongSpanFatigueIssue {
   readonly severity: "warning";
@@ -19,6 +20,7 @@ export interface AnalyzeLongSpanFatigueInput {
   readonly chapterContent: string;
   readonly chapterSummary?: string;
   readonly language?: "zh" | "en";
+  readonly narrativeChapters?: ReadonlyArray<WriterNarrativeChapter>;
 }
 
 export interface EnglishVarianceBrief {
@@ -42,17 +44,27 @@ const ENGLISH_PUNCTUATION = /[^a-z0-9]+/gi;
 export async function buildEnglishVarianceBrief(params: {
   readonly bookDir: string;
   readonly chapterNumber: number;
+  readonly narrativeChapters?: ReadonlyArray<WriterNarrativeChapter>;
 }): Promise<EnglishVarianceBrief | null> {
-  const chapterBodies = await loadPreviousChapterBodies(
-    params.bookDir,
-    params.chapterNumber,
-    CADENCE_WINDOW_DEFAULTS.englishVarianceLookback,
-  );
+  const chapterBodies = params.narrativeChapters
+    ? params.narrativeChapters.slice(-CADENCE_WINDOW_DEFAULTS.englishVarianceLookback).map((chapter) => chapter.body)
+    : await loadPreviousChapterBodies(
+        params.bookDir,
+        params.chapterNumber,
+        CADENCE_WINDOW_DEFAULTS.englishVarianceLookback,
+      );
   if (chapterBodies.length < 2) {
     return null;
   }
 
-  const summaryRows = await loadSummaryRows(join(params.bookDir, "story", "chapter_summaries.md"));
+  const summaryRows = params.narrativeChapters
+    ? params.narrativeChapters.map((chapter) => ({
+        chapter: chapter.chapterNumber,
+        title: chapter.title,
+        mood: "",
+        chapterType: "",
+      }))
+    : await loadSummaryRows(join(params.bookDir, "story", "chapter_summaries.md"));
   const recentRows = summaryRows
     .filter((row) => row.chapter < params.chapterNumber)
     .sort((left, right) => left.chapter - right.chapter)
@@ -91,7 +103,14 @@ export async function analyzeLongSpanFatigue(
   const language = input.language ?? "zh";
   const issues: LongSpanFatigueIssue[] = [];
 
-  const summaryRows = await loadSummaryRows(join(input.bookDir, "story", "chapter_summaries.md"));
+  const summaryRows = input.narrativeChapters
+    ? input.narrativeChapters.map((chapter) => ({
+        chapter: chapter.chapterNumber,
+        title: chapter.title,
+        mood: "",
+        chapterType: "",
+      }))
+    : await loadSummaryRows(join(input.bookDir, "story", "chapter_summaries.md"));
   const mergedRows = mergeCurrentSummary(summaryRows, input.chapterSummary);
   const recentRows = mergedRows
     .filter((row) => row.chapter <= input.chapterNumber)
@@ -117,11 +136,13 @@ export async function analyzeLongSpanFatigue(
     issues.push(titleIssue);
   }
 
-  const recentChapterBodies = await loadRecentChapterBodies(
-    input.bookDir,
-    input.chapterNumber,
-    input.chapterContent,
-  );
+  const recentChapterBodies = input.narrativeChapters
+    ? [...input.narrativeChapters.slice(-2).map((chapter) => chapter.body), input.chapterContent]
+    : await loadRecentChapterBodies(
+        input.bookDir,
+        input.chapterNumber,
+        input.chapterContent,
+      );
 
   const openingIssue = buildSentencePatternIssue(recentChapterBodies, "opening", language);
   if (openingIssue) {

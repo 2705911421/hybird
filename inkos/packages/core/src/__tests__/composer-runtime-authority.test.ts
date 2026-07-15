@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ describe("Runtime-authority composer", () => {
   it("uses only Runtime context and writes rebuildable governed artifacts", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-runtime-composer-")); roots.push(root);
     await mkdir(join(root, "story"), { recursive: true });
-    const client = { queryContext: async () => ({
+    const queryContext = vi.fn(async () => ({
       request_id: "a59dc75f-6b04-49ea-bd56-3d231bc9d885", project_id: book.id, revision: 3,
       authoritative_facts: [], retrieval_candidates: [], untrusted_materials: [], conflicts: [],
       layers: { hard_constraints: [{ item_id: "fact-key", layer: "hard_constraints", content: "Ada has the key",
@@ -33,12 +33,14 @@ describe("Runtime-authority composer", () => {
         trust: "trusted", subject: "ada", predicate: "inventory.key" }],
         plot_commitments: [], relevant_memory: [], recent_narrative: [], style_guidance: [] },
       trace: { budget_used: 8, selected_source_ids: ["fact-key"] },
-    }) } as unknown as StoryRuntimeClient;
+    }));
+    const client = { queryContext } as unknown as StoryRuntimeClient;
 
     const result = await composeGovernedChapter({ book, bookDir: root, chapterNumber: 1, plan,
-      storyRuntime: { mode: "story-runtime", baseUrl: "http://127.0.0.1:47831", timeoutMs: 3000,
-        maxContextTokens: 16000, maxItems: 100, fallbackOnUnavailable: false }, storyRuntimeClient: client });
+      expectedRevision: 3, storyRuntime: { mode: "story-runtime", baseUrl: "http://127.0.0.1:47831", timeoutMs: 3000,
+        maxContextTokens: 16000, maxItems: 100 }, storyRuntimeClient: client });
     expect(result.contextPackage.selectedContext.some((entry) => entry.source.includes("fact-key"))).toBe(true);
+    expect(queryContext).toHaveBeenCalledWith(expect.objectContaining({ expectedRevision: 3 }));
     await expect(readFile(result.contextPath, "utf-8")).resolves.toContain("Ada has the key");
   });
 
@@ -46,7 +48,7 @@ describe("Runtime-authority composer", () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-legacy-composer-")); roots.push(root);
     await expect(composeGovernedChapter({ book: { ...book, authorityMode: "legacy" }, bookDir: root,
       chapterNumber: 1, plan, storyRuntime: { mode: "legacy", baseUrl: "http://127.0.0.1:47831",
-        timeoutMs: 3000, maxContextTokens: 16000, maxItems: 100, fallbackOnUnavailable: false } }))
+        timeoutMs: 3000, maxContextTokens: 16000, maxItems: 100 } as never }))
       .rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
   });
 });

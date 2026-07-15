@@ -103,7 +103,8 @@ describe("CLI integration", () => {
       expect(config.llm.model).toBeDefined();
       expect(config.daemon).toBeDefined();
       expect(config.notify).toEqual([]);
-      expect(config.storyRuntime).toMatchObject({ mode: "story-runtime", fallbackOnUnavailable: false });
+      expect(config.storyRuntime).toMatchObject({ mode: "story-runtime" });
+      expect(config.storyRuntime).not.toHaveProperty("fallbackOnUnavailable");
     });
 
     it("creates .env file", async () => {
@@ -956,7 +957,7 @@ describe("CLI integration", () => {
     it("does not compose from a pre-planned Markdown intent without Runtime", async () => {
       const { stdout, exitCode } = runStderr(["compose", "chapter", "cli-book", "--json"]);
       expect(exitCode).not.toBe(0);
-      expect(JSON.parse(stdout)).toMatchObject({ error: expect.stringMatching(/Runtime|fetch|ECONNREFUSED/i) });
+      expect(JSON.parse(stdout)).toMatchObject({ error: expect.stringMatching(/Runtime|LEGACY|fetch|ECONNREFUSED/i) });
     });
 
     it("does not build local context artifacts when Runtime is unavailable", async () => {

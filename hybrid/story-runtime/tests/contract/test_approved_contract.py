@@ -60,7 +60,8 @@ def test_inline_read_responses_match_approved_components(app, auth_headers):
     schemas = approved["components"]["schemas"]
     query = {
         "request_id": "2827cc6f-4cbb-451d-8a34-1b849a44cff5", "project_id": "lighthouse-fixture",
-        "schema_version": "story-runtime/v1", "chapter_number": 4, "intent": "harbor brass key ferry",
+        "schema_version": "story-runtime/v1", "chapter_number": 4, "expected_revision": 7,
+        "intent": "harbor brass key ferry",
         "budget": {"max_tokens": 1024, "max_items": 20},
     }
     with TestClient(app) as client:

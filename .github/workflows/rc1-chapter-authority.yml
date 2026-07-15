@@ -1,15 +1,21 @@
-name: RC-1 chapter authority
+name: RC-1 Gate
 
 on:
   push:
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
-  authority-gate:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: inkos
+  cross-platform:
+    name: Cross-platform gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -20,7 +26,122 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: inkos/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check:chapter-authority
-      - run: pnpm --filter @actalk/inkos-core typecheck
-      - run: pnpm --filter @actalk/inkos-core test -- chapter-application-service.test.ts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: hybrid/story-runtime/pyproject.toml
+      - name: Install committed dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - name: Install Story Runtime test dependencies
+        run: python -m pip install -e "hybrid/story-runtime[test]"
+      - name: Python architecture gate
+        run: python hybrid/scripts/check_architecture.py
+      - name: TypeScript chapter-authority call-graph gate
+        run: pnpm check:chapter-authority
+        working-directory: inkos
+      - name: Story Runtime full suite
+        run: python -m pytest -q
+        working-directory: hybrid/story-runtime
+      - name: Story Runtime package health
+        run: python -m pip check
+      - name: Story Runtime compile gate
+        run: python -m compileall -q src tests scripts
+        working-directory: hybrid/story-runtime
+      - name: Full typecheck
+        run: pnpm typecheck
+        working-directory: inkos
+      - name: Full build
+        run: pnpm build
+        working-directory: inkos
+
+  authority-suites:
+    name: Specialized authority suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: inkos/pnpm-lock.yaml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: hybrid/story-runtime/pyproject.toml
+      - name: Install committed dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - name: Install Story Runtime test dependencies
+        run: python -m pip install -e "hybrid/story-runtime[test]"
+      - name: Runtime chapter reads and export consistency
+        run: python -m pytest -q tests/unit/test_chapter_reads.py
+        working-directory: hybrid/story-runtime
+      - name: Core application service and Runtime-unavailable matrix
+        run: pnpm --filter @actalk/inkos-core test -- chapter-application-service.test.ts story-runtime-integration.test.ts context-transform.test.ts agent-tools.test.ts
+        working-directory: inkos
+      - name: Writer red-team A-F and revision binding
+        run: pnpm --filter @actalk/inkos-core test -- writer.test.ts composer-runtime-authority.test.ts agent-system-prompt.test.ts
+        working-directory: inkos
+      - name: CLI authority matrix
+        run: pnpm --filter @actalk/inkos test -- auto-command.test.ts cli-integration.test.ts
+        working-directory: inkos
+      - name: Interactive TUI A-F and fault matrix
+        run: pnpm --filter @actalk/inkos test -- tui-chapter-surface.test.ts tui-rc1-interaction.test.tsx
+        working-directory: inkos
+      - name: Studio API authority and fail-closed matrix
+        run: pnpm --filter @actalk/inkos-studio test -- server.test.ts story-runtime-status-endpoint.test.ts
+        working-directory: inkos
+      - name: Core full suite
+        run: pnpm --filter @actalk/inkos-core test
+        working-directory: inkos
+      - name: CLI full suite
+        run: pnpm --filter @actalk/inkos test
+        working-directory: inkos
+      - name: Studio unit suite
+        run: pnpm --filter @actalk/inkos-studio test
+        working-directory: inkos
+
+  chromium-blackbox:
+    name: Chromium UI black-box
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: inkos/pnpm-lock.yaml
+      - name: Install committed dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: inkos
+      - name: Install Chromium
+        run: pnpm --filter @actalk/inkos-studio exec playwright install --with-deps chromium
+        working-directory: inkos
+      - name: Playwright Chromium RC-1 A-F and fault matrix
+        run: pnpm --filter @actalk/inkos-studio test:e2e:rc1 -- --project=chromium
+        working-directory: inkos
+
+  rc1-required-gate:
+    name: RC-1 Required Gate
+    if: always()
+    needs: [cross-platform, authority-suites, chromium-blackbox]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce all blocking RC-1 jobs
+        env:
+          CROSS_PLATFORM: ${{ needs.cross-platform.result }}
+          AUTHORITY_SUITES: ${{ needs.authority-suites.result }}
+          CHROMIUM_BLACKBOX: ${{ needs.chromium-blackbox.result }}
+        run: |
+          test "$CROSS_PLATFORM" = success
+          test "$AUTHORITY_SUITES" = success
+          test "$CHROMIUM_BLACKBOX" = success

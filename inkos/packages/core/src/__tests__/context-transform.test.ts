@@ -29,6 +29,13 @@ describe("createBookContextTransform", () => {
     expect(result).toBe(messages);
   });
 
+  it("does not inject local story projections for Runtime-authority books", async () => {
+    await writeFile(join(projectRoot, "books", bookId, "book.json"), JSON.stringify({ authorityMode: "runtime" }));
+    const transform = createBookContextTransform(bookId, projectRoot);
+    const messages = [{ role: "user" as const, content: "continue", timestamp: Date.now() }];
+    await expect(transform(messages)).resolves.toBe(messages);
+  });
+
   it("prepends a user message with truth file contents", async () => {
     const transform = createBookContextTransform(bookId, projectRoot);
     const original = [

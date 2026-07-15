@@ -40,6 +40,7 @@ export function createBookContextTransform(
   const storyDir = join(bookDir, "story");
 
   return async (messages) => {
+    if (await isRuntimeAuthorityBook(bookDir)) return messages;
     const sections = await readTruthFiles(storyDir);
     if (sections.length === 0) return messages;
 
@@ -78,6 +79,15 @@ export function createBookContextTransform(
 
     return [injected, ...messages];
   };
+}
+
+async function isRuntimeAuthorityBook(bookDir: string): Promise<boolean> {
+  try {
+    const raw = JSON.parse(await readFile(join(bookDir, "book.json"), "utf-8")) as { authorityMode?: unknown };
+    return raw.authorityMode === "runtime";
+  } catch {
+    return false;
+  }
 }
 
 interface TruthFileSection {

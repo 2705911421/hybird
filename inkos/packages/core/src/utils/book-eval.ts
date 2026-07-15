@@ -19,7 +19,7 @@ export interface BookEval {
   readonly bookId: string;
   readonly totalChapters: number;
   readonly totalWords: number;
-  readonly auditPassRate: number;
+  readonly auditPassRate: number | null;
   readonly avgAiTellDensity: number;
   readonly avgParagraphWarnings: number;
   readonly hookResolveRate: number;
@@ -123,13 +123,14 @@ export async function evaluateBookQuality(options: EvaluateBookQualityOptions): 
   const avgParagraphWarnings = chapterEvals.length > 0
     ? chapterEvals.reduce((s, c) => s + c.paragraphWarnings, 0) / chapterEvals.length
     : 0;
-  const qualityScore = Math.round(
-    analytics.auditPassRate * 0.3
-    + Math.max(0, 100 - avgAiTellDensity * 30) * 0.25
+  const knownQualityScore =
+    Math.max(0, 100 - avgAiTellDensity * 30) * 0.25
     + Math.max(0, 100 - avgParagraphWarnings * 10) * 0.15
     + hookResolveRate * 0.2
-    + Math.max(0, 100 - duplicateTitles * 20) * 0.1,
-  );
+    + Math.max(0, 100 - duplicateTitles * 20) * 0.1;
+  const qualityScore = Math.round(analytics.auditPassRate === null
+    ? knownQualityScore / 0.7
+    : analytics.auditPassRate * 0.3 + knownQualityScore);
 
   return {
     bookId,

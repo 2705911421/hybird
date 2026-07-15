@@ -21,7 +21,11 @@ async function migrate(target) {
   if (storyRuntime.fallbackOnUnavailable === true) {
     warnings.push("storyRuntime.fallbackOnUnavailable=true is retired; Runtime failures now fail closed");
   }
-  raw.storyRuntime = { ...storyRuntime, mode: "story-runtime", fallbackOnUnavailable: false };
+  if ("fallbackOnUnavailable" in storyRuntime) {
+    warnings.push("storyRuntime.fallbackOnUnavailable was removed from production configuration");
+  }
+  const { fallbackOnUnavailable: _retiredFallback, ...runtimeConfig } = storyRuntime;
+  raw.storyRuntime = { ...runtimeConfig, mode: "story-runtime" };
 
   for (const key of ["legacyTruthAuthority", "memoryAuthority", "jsonAuthority", "stateMirror", "legacyDashboard", "claudePluginPath"]) {
     if (key in raw) {

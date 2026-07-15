@@ -1,8 +1,9 @@
 import { z } from "zod";
 
 export const STORY_RUNTIME_SCHEMA_VERSION = "story-runtime/v1" as const;
+export const STORY_RUNTIME_VERSION = "0.1.0" as const;
 
-export const StoryRuntimeModeSchema = z.enum(["legacy", "story-runtime", "shadow"]);
+export const StoryRuntimeModeSchema = z.literal("story-runtime");
 export type StoryRuntimeMode = z.infer<typeof StoryRuntimeModeSchema>;
 
 export const StoryRuntimeConfigSchema = z.object({
@@ -12,7 +13,6 @@ export const StoryRuntimeConfigSchema = z.object({
   timeoutMs: z.number().int().min(100).max(60_000).default(3_000),
   maxContextTokens: z.number().int().min(256).max(100_000).default(16_000),
   maxItems: z.number().int().min(1).max(500).default(100),
-  fallbackOnUnavailable: z.boolean().default(false),
 }).strict().default({ mode: "story-runtime" });
 
 export type StoryRuntimeConfig = z.infer<typeof StoryRuntimeConfigSchema>;

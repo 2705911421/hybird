@@ -1,0 +1,47 @@
+# RC-1 CI Gate Report
+
+## Workflow contract
+
+正式 workflow：`.github/workflows/rc1-chapter-authority.yml`，显示名 `RC-1 Gate`，触发器为 `push`、`pull_request`、`workflow_call`。
+
+| Blocking check/job | OS | 内容 |
+| --- | --- | --- |
+| `Cross-platform gate (ubuntu-latest)` | Ubuntu | install、Python/TS architecture、Runtime full、pip/compile、typecheck、build |
+| `Cross-platform gate (windows-latest)` | Windows | 同上 |
+| `Cross-platform gate (macos-latest)` | macOS | 同上 |
+| `Specialized authority suites` | Ubuntu | Runtime reads/export、Core、Writer A-F、CLI、TUI、Studio API 与三套 full tests |
+| `Chromium UI black-box` | Ubuntu | Playwright RC-1 A-F + fault matrix |
+| `RC-1 Required Gate` | Ubuntu | `if: always()` 聚合检查，只有前三组全部 success 才通过 |
+
+所有关键 job 都是 blocking；workflow 中没有 `continue-on-error`。fixture、项目数据和 Runtime stub 均来自提交文件，不依赖开发机状态，不调用真实 LLM。
+
+## Release dependency
+
+`.github/workflows/release.yml` 的 `rc1-gate` 使用同一 reusable workflow。`runtime-bundles` 和 `source-and-legal` 均声明 `needs: rc1-gate`，因此 RC-1 gate 未成功时不会生成 release artifacts。
+
+## Branch protection truth
+
+2026-07-15 查询 GitHub API：`master` 返回 `404 Branch not protected`。因此当前不能宣称默认分支已受保护。
+
+仓库管理员必须执行：
+
+1. Settings → Branches → Add branch protection rule，pattern `master`。
+2. 启用 “Require status checks to pass before merging”。
+3. 将 `RC-1 Required Gate` 设为 required；该 aggregate 已强制依赖全部 OS、specialized 与 Chromium jobs。
+4. 启用 “Require branches to be up to date before merging”。
+5. 禁止绕过或按仓库策略限制 bypass actors，并保存规则。
+6. 用一个 PR 验证 required context 名称与 Actions 实际 check-run 完全一致。
+
+如果管理员希望逐项可见，也可额外 require 上表五个非 aggregate check；最低不可省略的是 `RC-1 Required Gate`。
+
+## Evidence state
+
+| Evidence | 状态 |
+| --- | --- |
+| YAML parse | PASS |
+| local preflight | PASS（不作为最终 release 证据） |
+| clean-commit local regression | PENDING |
+| default-branch `RC-1 Required Gate` actual run | PENDING |
+| branch protection | NOT ENABLED；需管理员操作 |
+
+因此当前 F-002 为 **PARTIAL**。只有默认分支最终提交的实际 run 成功后，workflow/release 部分才能标记 CLOSED；branch protection 状态仍必须如实保留为管理员待办。

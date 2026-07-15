@@ -33,7 +33,7 @@ export const evalCommand = new Command("eval")
         log(`  Words: ${result.totalWords.toLocaleString()}`);
         log("");
         log("  Dimensions:");
-        log(`    Audit pass rate:      ${result.auditPassRate}%`);
+        log(`    Audit pass rate:      ${result.auditPassRate === null ? "N/A" : `${result.auditPassRate}%`}`);
         log(`    AI tell density:      ${result.avgAiTellDensity.toFixed(2)} / 1k chars`);
         log(`    Paragraph warnings:   ${result.avgParagraphWarnings.toFixed(1)} avg/chapter`);
         log(`    Hook resolve rate:    ${result.hookResolveRate}%`);

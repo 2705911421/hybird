@@ -11,6 +11,16 @@ const ZERO_USAGE = {
   totalTokens: 0,
 } as const;
 
+const EMPTY_LEGACY_NARRATIVE = {
+  projectId: "writer-book",
+  authorityMode: "legacy",
+  projectRevision: 0,
+  latestChapter: 0,
+  recentChapters: [],
+  previousChapterEnding: "",
+  source: "legacy",
+} as const;
+
 function createCaptureLogger() {
   const infos: string[] = [];
   const warnings: string[] = [];
@@ -292,6 +302,18 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-23T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: {
+          ...EMPTY_LEGACY_NARRATIVE,
+          latestChapter: 99,
+          recentChapters: [{
+            chapterNumber: 99,
+            title: "Locked Gate",
+            summary: "Lin Yue chooses the mentor line over the guild line; mentor-oath advanced",
+            body: "Lin Yue chose the mentor line over the guild line.",
+            bodyChecksum: "99",
+            finalizedRevision: 0,
+          }],
+        },
         chapterNumber: 100,
         chapterIntent: [
           "# Chapter Intent",
@@ -500,6 +522,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-25T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 3,
         lengthSpec: buildLengthSpec(2200, "en"),
       });
@@ -592,6 +615,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-25T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 3,
         title: "River Ledger",
         content: "Lin Yue follows the debt into the river-port ledger.",
@@ -741,6 +765,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-25T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 3,
         lengthSpec: buildLengthSpec(2200, "en"),
       });
@@ -884,6 +909,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-27T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 3,
         lengthSpec: buildLengthSpec(2200, "en"),
       });
@@ -997,6 +1023,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-23T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 1,
         lengthSpec: buildLengthSpec(220, "zh"),
       });
@@ -1119,6 +1146,15 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-26T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: {
+          ...EMPTY_LEGACY_NARRATIVE,
+          latestChapter: 3,
+          recentChapters: [
+            { chapterNumber: 1, title: "Ledger", summary: "Mara hides the ledger", body: "Mara kept the ledger close to her chest. The corridor stayed quiet after the bell. There it was again.", bodyChecksum: "1", finalizedRevision: 0 },
+            { chapterNumber: 2, title: "Ash", summary: "Ash falls", body: "Mara kept the ledger close to her chest while the ash fell. The corridor stayed quiet until Taryn stopped. There it was again.", bodyChecksum: "2", finalizedRevision: 0 },
+            { chapterNumber: 3, title: "Harbor", summary: "The gate stays watched", body: "Mara kept the ledger close to her chest near the harbor gate. The corridor stayed quiet while the guards changed. There it was again.", bodyChecksum: "3", finalizedRevision: 0 },
+          ],
+        },
         chapterNumber: 4,
         chapterMemo: {
           chapter: 4,
@@ -1249,6 +1285,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-26T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 4,
         chapterMemo: {
           chapter: 4,
@@ -1398,6 +1435,7 @@ describe("WriterAgent", () => {
           updatedAt: "2026-03-26T00:00:00.000Z",
         },
         bookDir,
+        narrativeContext: EMPTY_LEGACY_NARRATIVE,
         chapterNumber: 4,
         chapterMemo: {
           chapter: 4,

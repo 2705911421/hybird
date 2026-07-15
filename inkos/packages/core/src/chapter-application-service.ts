@@ -12,6 +12,8 @@ export type ChapterApplicationErrorCode =
   | "runtime_timeout"
   | "runtime_contract_mismatch"
   | "runtime_version_mismatch"
+  | "runtime_unauthorized"
+  | "invalid_authority_mode"
   | "database_locked"
   | "revision_changed"
   | "checksum_mismatch"
@@ -165,6 +167,9 @@ function mapRuntimeError(error: unknown): never {
   if (error.runtimeCode === "VERSION_MISMATCH") {
     throw new ChapterApplicationError("runtime_version_mismatch", error.message, false, error.currentRevision, error);
   }
+  if (error.status === 401 || error.status === 403) {
+    throw new ChapterApplicationError("runtime_unauthorized", "Story Runtime rejected the configured credentials.", false, error.currentRevision, error);
+  }
   if (error.status === 404) {
     throw new ChapterApplicationError("not_found", error.message, false, error.currentRevision, error);
   }
@@ -177,6 +182,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
 
   async list(projectId: string, query: Parameters<ChapterReadPort["list"]>[1] = {}): Promise<ChapterPage> {
     try {
+      await this.client.assertCompatible();
       const result = await this.client.finalizedChapters(projectId, query);
       return {
         authority: "runtime", projectRevision: result.revision, totalCount: result.total_count,
@@ -188,6 +194,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
 
   async get(projectId: string, chapterNumber: number): Promise<ChapterDetail> {
     try {
+      await this.client.assertCompatible();
       const result = await this.client.finalizedChapter(projectId, chapterNumber);
       return verifyBody({
         chapterId: result.chapter_id, number: result.chapter_number, orderKey: result.chapter_number,
@@ -220,6 +227,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
 
   async summary(projectId: string): Promise<ChapterCollectionSummary> {
     try {
+      await this.client.assertCompatible();
       const result = await this.client.chapterAggregate(projectId);
       return {
         authority: "runtime", projectRevision: result.revision, chapterCount: result.chapter_count,
@@ -238,6 +246,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
 
   async exportSnapshot(projectId: string, request: Parameters<ChapterExportPort["exportSnapshot"]>[1] = {}): Promise<ChapterExportSnapshot> {
     try {
+      await this.client.assertCompatible();
       const result = await this.client.chapterExport(projectId, request);
       return {
         authority: "runtime", snapshotId: result.snapshot_id, projectRevision: result.revision,
@@ -249,6 +258,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
 
   async search(projectId: string, request: Parameters<ChapterReadPort["search"]>[1]): Promise<ChapterSearchPage> {
     try {
+      await this.client.assertCompatible();
       const result = await this.client.searchChapters(projectId, request);
       return {
         authority: "runtime", projectRevision: result.revision, indexRevision: result.index_revision,
@@ -265,7 +275,7 @@ export class StoryRuntimeChapterReadAdapter implements ChapterPort {
     return {
       bookId: projectId, totalChapters: summary.chapterCount, totalWords: summary.totalCharacters,
       avgWordsPerChapter: summary.chapterCount ? Math.round(summary.totalCharacters / summary.chapterCount) : 0,
-      auditPassRate: 100, topIssueCategories: [], chaptersWithMostIssues: [],
+      auditPassRate: null, topIssueCategories: [], chaptersWithMostIssues: [],
       statusDistribution: { finalized: summary.chapterCount }, authority: "runtime",
       projectRevision: summary.projectRevision, stale: false,
     };
@@ -292,7 +302,7 @@ export class LegacyChapterReadAdapter implements ChapterPort {
         return {
           chapterId: `legacy:${projectId}:${chapter.number}`, number: chapter.number, orderKey: chapter.number,
           title: chapter.title, status: chapter.status, summary: "", body, bodyChecksum: checksum, artifactChecksum: checksum,
-          characterCount: [...body].length, resultingRevision: 0,
+          characterCount: body ? [...body].length : chapter.wordCount, resultingRevision: 0,
           createdAt: chapter.createdAt, updatedAt: chapter.updatedAt, finalizedAt: chapter.updatedAt,
           auditIssues: chapter.auditIssues,
         };
@@ -378,14 +388,15 @@ export class LegacyChapterReadAdapter implements ChapterPort {
 
 export class ProjectChapterAuthorityResolver {
   private readonly runtimeAdapter?: StoryRuntimeChapterReadAdapter;
-  private readonly legacyAdapter: LegacyChapterReadAdapter;
 
   constructor(
     private readonly state: Pick<StateManager, "loadBookConfig" | "bookDir" | "loadChapterIndex">,
     options: { readonly storyRuntime?: StoryRuntimeConfig; readonly runtimeClient?: StoryRuntimeClient; readonly apiToken?: string } = {},
   ) {
-    this.legacyAdapter = new LegacyChapterReadAdapter(state);
     const config = options.storyRuntime;
+    if (config && config.mode !== "story-runtime") {
+      throw new ChapterApplicationError("invalid_authority_mode", `Unsupported chapter authority mode: ${String(config.mode)}`);
+    }
     if (options.runtimeClient) this.runtimeAdapter = new StoryRuntimeChapterReadAdapter(options.runtimeClient);
     else if (config?.mode === "story-runtime") {
       this.runtimeAdapter = new StoryRuntimeChapterReadAdapter(new StoryRuntimeClient({
@@ -402,7 +413,10 @@ export class ProjectChapterAuthorityResolver {
       }
       return this.runtimeAdapter;
     }
-    return this.legacyAdapter;
+    if (book.authorityMode !== undefined && book.authorityMode !== "legacy") {
+      throw new ChapterApplicationError("invalid_authority_mode", `Unsupported project chapter authority: ${String(book.authorityMode)}`);
+    }
+    return new LegacyChapterReadAdapter(this.state);
   }
 }
 

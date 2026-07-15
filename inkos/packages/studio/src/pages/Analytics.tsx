@@ -9,6 +9,8 @@ interface AnalyticsData {
   readonly totalWords: number;
   readonly avgWordsPerChapter: number;
   readonly statusDistribution: Record<string, number>;
+  readonly authority?: "runtime" | "legacy";
+  readonly projectRevision?: number;
 }
 
 interface Nav {
@@ -28,7 +30,8 @@ export function Analytics({ bookId, nav, theme, t }: { bookId: string; nav: Nav;
   const totalFromDist = statuses.reduce((sum, [, count]) => sum + count, 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="runtime-analytics" data-runtime-revision={data.projectRevision ?? ""}>
+      {data.authority === "runtime" && <div>Story Runtime analytics · revision {data.projectRevision}</div>}
       <div className={`flex items-center gap-2 text-sm ${c.muted}`}>
         <button onClick={nav.toDashboard} className={c.link}>{t("bread.books")}</button>
         <span>/</span>

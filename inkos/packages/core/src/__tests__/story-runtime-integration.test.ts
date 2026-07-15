@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BookConfig } from "../models/book.js";
 import type { PlanChapterOutput } from "../agents/planner.js";
 import { StoryRuntimeClient } from "../story-runtime/client.js";
+import { StoryRuntimeConfigSchema } from "../story-runtime/schemas.js";
 import {
   StoryRuntimeContextProvider,
   sanitizeUntrustedText,
@@ -126,7 +127,14 @@ describe("Story Runtime Phase 2/3 integration", () => {
         layer: "hard_constraints", confidence: 1, updatedAt: timestamp, importance: 100, trust: "trusted",
       }], []),
     };
-    await expect(selectContextProvider({ mode: "shadow", runtime, request })).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
+    await expect(selectContextProvider({ mode: "shadow", runtime, request } as never)).rejects.toThrow("LEGACY_LONG_FORM_READ_ONLY");
+  });
+
+  it("rejects the retired Runtime fallback flag in production configuration", () => {
+    expect(() => StoryRuntimeConfigSchema.parse({
+      mode: "story-runtime",
+      fallbackOnUnavailable: false,
+    })).toThrow();
   });
 
   it("exposes only the governed Phase 4 chapter lifecycle to normal InkOS callers", () => {

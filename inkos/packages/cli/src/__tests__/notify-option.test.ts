@@ -25,6 +25,15 @@ vi.mock("@actalk/inkos-core", () => ({
       return getNextChapterNumberMock();
     }
   },
+  ChapterApplicationService: class {
+    constructor(_resolver: unknown) {}
+    async summary() {
+      return { latestChapter: (await getNextChapterNumberMock()) - 1 };
+    }
+  },
+  ProjectChapterAuthorityResolver: class {
+    constructor(_state: unknown, _options: unknown) {}
+  },
   dispatchNotification: dispatchNotificationMock,
   resolveChapterReviewMode: vi.fn(() => "auto"),
   resolveRevisionGate: vi.fn(() => undefined),
@@ -69,14 +78,17 @@ describe("--notify command option", () => {
     loadBookConfigMock.mockResolvedValue({
       title: "示例书",
       language: "zh",
+      authorityMode: "runtime",
       writing: {},
     });
     loadConfigMock.mockResolvedValue({
       llm: {},
       writing: { reviewRetries: 1 },
+      storyRuntime: { mode: "story-runtime", baseUrl: "http://127.0.0.1:47831", timeoutMs: 3000 },
       notify: notifyChannels,
     });
     buildPipelineConfigMock.mockReturnValue({});
+    getNextChapterNumberMock.mockResolvedValue(1);
     dispatchNotificationMock.mockResolvedValue(undefined);
   });
 

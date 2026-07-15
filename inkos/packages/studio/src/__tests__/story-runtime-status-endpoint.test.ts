@@ -22,13 +22,12 @@ describe("Studio Story Runtime status endpoints", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  it("shows disabled health in legacy mode", async () => {
+  it("rejects retired global Runtime modes before route-level source selection", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-studio-runtime-")); roots.push(root);
     await writeConfig(root, { mode: "legacy" });
     const app = createStudioServer({} as never, root);
     const response = await app.request("/api/v1/story-runtime/status");
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ mode: "legacy", enabled: false, readOnly: true, health: null, featureFlags: { panel: true, recovery: true } });
+    expect(response.status).toBe(500);
   });
 
   it("displays live runtime health through the public client", async () => {
@@ -45,11 +44,15 @@ describe("Studio Story Runtime status endpoints", () => {
     const address = server.address();
     const port = typeof address === "object" && address ? address.port : 0;
     const root = await mkdtemp(join(tmpdir(), "inkos-studio-runtime-")); roots.push(root);
-    await writeConfig(root, { mode: "shadow", baseUrl: `http://127.0.0.1:${port}` });
+    await writeConfig(root, { mode: "story-runtime", baseUrl: `http://127.0.0.1:${port}` });
     const app = createStudioServer({} as never, root);
     const response = await app.request("/api/v1/story-runtime/status");
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ mode: "shadow", enabled: false, readOnly: true, health: null });
+    expect(await response.json()).toMatchObject({
+      mode: "story-runtime",
+      enabled: true,
+      health: { status: "ok", database: "ready" },
+    });
   });
 
   it("rejects direct chapter and Truth writes for Runtime-authority books", async () => {

@@ -49,6 +49,16 @@ interface BookData {
   };
   readonly chapters: ReadonlyArray<ChapterMeta>;
   readonly nextChapter: number;
+  readonly authority?: "runtime" | "legacy";
+  readonly projectRevision?: number;
+  readonly totalCount?: number;
+  readonly latestChapter?: number;
+}
+
+interface ChapterSearchResult {
+  readonly totalCount: number;
+  readonly projectRevision: number;
+  readonly items: ReadonlyArray<{ readonly number: number; readonly title: string; readonly bodyChecksum: string; readonly snippet: string }>;
 }
 
 type ReviseMode = "spot-fix" | "polish" | "rewrite" | "rework" | "anti-detect";
@@ -111,6 +121,9 @@ export function BookDetail({
   const [exportFormat, setExportFormat] = useState<ExportFormat>("txt");
   const [exportApprovedOnly, setExportApprovedOnly] = useState(false);
   const [bookActionPending, setBookActionPending] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<ChapterSearchResult | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   // Auto (pipeline self-reviews) vs manual (write the draft and stop; you
   // run audit / revise / approve as checkpoint actions). This is scoped to
   // the current book, with project-level mode as the inherited default.
@@ -325,7 +338,7 @@ export function BookDetail({
         qualityScore: number;
         totalChapters: number;
         totalWords: number;
-        auditPassRate: number;
+        auditPassRate: number | null;
         avgAiTellDensity: number;
         hookResolveRate: number;
       }>(`/books/${bookId}/eval`);
@@ -333,7 +346,7 @@ export function BookDetail({
         `${t("book.evaluate")}: ${result.qualityScore}/100`,
         `${t("dash.chapters")}: ${result.totalChapters}`,
         `${t("book.words")}: ${result.totalWords.toLocaleString()}`,
-        `Audit: ${result.auditPassRate}%`,
+        `Audit: ${result.auditPassRate === null ? "N/A" : `${result.auditPassRate}%`}`,
         `AI tells: ${result.avgAiTellDensity}/1k`,
         `Hooks: ${result.hookResolveRate}%`,
       ].join("\n");
@@ -405,7 +418,13 @@ export function BookDetail({
     </div>
   );
 
-  if (error) return <div className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20">Error: {error}</div>;
+  if (error) return (
+    <div data-testid="runtime-unavailable" className="text-destructive p-8 bg-destructive/5 rounded-xl border border-destructive/20 space-y-3">
+      <div>Runtime unavailable: {error}</div>
+      <div>Current chapter data is hidden, export is blocked, and writes are disabled. No local chapter fallback is displayed.</div>
+      <button data-testid="runtime-retry" onClick={refetch} className="px-4 py-2 rounded-lg border border-destructive/30">Retry Runtime</button>
+    </div>
+  );
   if (!data) return null;
 
   const { book, chapters } = data;
@@ -420,6 +439,13 @@ export function BookDetail({
 
   return (
     <div className="space-y-8 fade-in">
+      {data.authority === "runtime" && (
+        <div data-testid="runtime-authority-summary" className="rounded-xl border border-primary/20 bg-primary/[0.04] px-4 py-3 text-sm">
+          Story Runtime authority · chapters <span data-testid="runtime-count">{data.totalCount ?? chapters.length}</span>
+          {" · latest "}<span data-testid="runtime-latest">{data.latestChapter ?? data.nextChapter - 1}</span>
+          {" · revision "}<span data-testid="runtime-revision">{data.projectRevision ?? "unknown"}</span>
+        </div>
+      )}
       {/* Breadcrumbs */}
       <nav className="flex items-center gap-2 text-[13px] font-medium text-muted-foreground">
         <button
@@ -614,6 +640,32 @@ export function BookDetail({
               {t("book.export")}
             </button>
           </div>
+      </div>
+
+      <div className="paper-sheet rounded-2xl border border-border/40 p-4 space-y-3">
+        <form
+          className="flex gap-2"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setSearchError(null);
+            try {
+              setSearchResult(await fetchJson<ChapterSearchResult>(`/books/${bookId}/chapter-search?q=${encodeURIComponent(searchQuery)}`));
+            } catch (searchFailure) {
+              setSearchResult(null);
+              setSearchError(searchFailure instanceof Error ? searchFailure.message : String(searchFailure));
+            }
+          }}
+        >
+          <input data-testid="runtime-search-input" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} className="flex-1 px-3 py-2 rounded-lg border border-border/50 bg-secondary/30" placeholder="Search Runtime chapters" />
+          <button data-testid="runtime-search-submit" className="px-4 py-2 rounded-lg bg-secondary">Search</button>
+        </form>
+        {searchError && <div className="text-destructive">Runtime search failed: {searchError}</div>}
+        {searchResult && (
+          <div data-testid="runtime-search-results" className="text-sm space-y-1">
+            <div>{searchResult.totalCount} result(s) · revision {searchResult.projectRevision}</div>
+            {searchResult.items.map((item) => <div key={item.number}>{item.number}. {item.title} · {item.bodyChecksum} · {item.snippet}</div>)}
+          </div>
+        )}
       </div>
 
       {/* Book Settings */}

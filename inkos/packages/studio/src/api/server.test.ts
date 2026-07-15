@@ -43,6 +43,7 @@ type MockChapterItem = {
 };
 const chapterServiceFixtureMock: {
   current?: { projectRevision: number; collectionChecksum: string; items: MockChapterItem[] };
+  error?: Error;
 } = {};
 const pipelineConfigs: unknown[] = [];
 const processProjectInteractionRequestMock = vi.fn();
@@ -257,6 +258,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     constructor(_resolver: unknown) {}
 
     private async items(bookId: string) {
+      if (chapterServiceFixtureMock.error) throw chapterServiceFixtureMock.error;
       if (chapterServiceFixtureMock.current) return chapterServiceFixtureMock.current.items;
       const index = await loadChapterIndexMock(bookId) as Array<Record<string, unknown>>;
       return index.map((chapter, position) => ({
@@ -477,6 +479,7 @@ describe("createStudioServer daemon lifecycle", () => {
     saveChapterIndexMock.mockReset();
     loadChapterIndexMock.mockReset();
     chapterServiceFixtureMock.current = undefined;
+    chapterServiceFixtureMock.error = undefined;
     loadBookConfigMock.mockReset();
     generatePlayImageMock.mockClear();
     await mkdir(join(root, "books", "demo-book", "chapters"), { recursive: true });
@@ -3370,6 +3373,18 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(pipelineConfigs.at(-1)).toEqual(expect.objectContaining({
       writingReviewRetries: 3,
     }));
+  });
+
+  it("rejects write-next before acknowledgement when Runtime is unavailable", async () => {
+    const { ChapterApplicationError } = await import("@actalk/inkos-core");
+    chapterServiceFixtureMock.error = new ChapterApplicationError("runtime_unavailable", "Runtime stopped", true);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/write-next", { method: "POST" });
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "RUNTIME_UNAVAILABLE", retryable: true } });
+    expect(writeNextChapterMock).not.toHaveBeenCalled();
   });
 
   it("rejects explicit chat chapter edits that bypass Runtime", async () => {

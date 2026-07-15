@@ -6,7 +6,7 @@ import { type ReviseMode } from "../agents/reviser.js";
 import { defaultChapterLength } from "../utils/length-metrics.js";
 import { inferLanguage } from "../utils/language.js";
 import { mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { StateManager } from "../state/manager.js";
 import { createInteractionToolsFromDeps } from "../interaction/project-tools.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
@@ -2421,6 +2421,30 @@ export function createReadTool(
     ): Promise<AgentToolResult<undefined>> {
       try {
         const filePath = resolveReadPath(booksRoot, params.path, options);
+        const relativePath = relative(booksRoot, filePath);
+        const parts = relativePath.split(/[\\/]/);
+        if (parts.length >= 2 && parts[0] && !relativePath.startsWith("..")) {
+          const state = new StateManager(projectRoot);
+          const book = await state.loadBookConfig(parts[0]).catch(() => undefined);
+          if (book?.authorityMode === "runtime") {
+            if (parts[1] === "story") {
+              throw new Error("RUNTIME_CONTEXT_REQUIRED: local story projections are not product authority.");
+            }
+            if (parts[1] === "chapters") {
+              const chapterNumber = Number.parseInt(parts[2]?.match(/^(\d+)/)?.[1] ?? "", 10);
+              if (!Number.isInteger(chapterNumber) || chapterNumber < 1) {
+                throw new Error("RUNTIME_CHAPTER_ID_REQUIRED: address a finalized chapter by number.");
+              }
+              const rawConfig = await state.loadProjectConfig();
+              const storyRuntime = StoryRuntimeConfigSchema.parse(rawConfig.storyRuntime ?? {});
+              const service = new ChapterApplicationService(new ProjectChapterAuthorityResolver(state, {
+                storyRuntime,
+                apiToken: storyRuntime.apiTokenEnv ? process.env[storyRuntime.apiTokenEnv] : undefined,
+              }));
+              return textResult((await service.get(parts[0], chapterNumber)).body);
+            }
+          }
+        }
         const content = await readFile(filePath, "utf-8");
         return textResult(content);
       } catch (err: any) {
@@ -2493,7 +2517,6 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
           }));
           const chapterResults = await chapterService.search(params.bookId, { query: params.pattern, limit: 100 });
           results.push(...chapterResults.items.map((hit) => `chapters/${String(hit.number).padStart(4, "0")}:${hit.snippet}`));
-          await searchDir(join(bookDir, "story"), "story/");
         } else {
           await Promise.all([
             searchDir(join(bookDir, "story"), "story/"),

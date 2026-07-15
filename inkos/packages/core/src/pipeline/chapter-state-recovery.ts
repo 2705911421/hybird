@@ -11,6 +11,7 @@ import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import type { ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { LengthLanguage } from "../utils/length-metrics.js";
+import type { WriterNarrativeContext } from "../writer-narrative-context.js";
 
 export interface SettlementRetryParams {
   readonly writer: Pick<WriterAgent, "settleChapterState">;
@@ -20,6 +21,7 @@ export interface SettlementRetryParams {
   readonly chapterNumber: number;
   readonly title: string;
   readonly content: string;
+  readonly narrativeContext: WriterNarrativeContext;
   readonly reducedControlInput?: {
     chapterIntent: string;
     contextPackage: ContextPackage;
@@ -58,6 +60,7 @@ export async function retrySettlementAfterValidationFailure(
     chapterNumber: params.chapterNumber,
     title: params.title,
     content: params.content,
+    narrativeContext: params.narrativeContext,
     allowReapply: true,
     chapterIntent: params.reducedControlInput?.chapterIntent,
     contextPackage: params.reducedControlInput?.contextPackage,

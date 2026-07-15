@@ -30,6 +30,7 @@ import {
   LegacyMigrationJobSchema,
   LegacyMigrationJobListSchema,
   STORY_RUNTIME_SCHEMA_VERSION,
+  STORY_RUNTIME_VERSION,
   type RuntimeContextResult,
   type RuntimeHealth,
   type RuntimeProjectStatus,
@@ -97,6 +98,7 @@ export interface QueryContextInput {
   readonly maxTokens: number;
   readonly maxItems: number;
   readonly includeRetrievalCandidates?: boolean;
+  readonly expectedRevision?: number;
 }
 
 export interface RuntimeStoryEventInput {
@@ -128,6 +130,7 @@ export class StoryRuntimeClient {
   private readonly timeoutMs: number;
   private readonly apiToken?: string;
   private readonly fetchImpl: typeof fetch;
+  private compatibilityCheck?: Promise<void>;
 
   constructor(options: StoryRuntimeClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -138,6 +141,41 @@ export class StoryRuntimeClient {
 
   health(): Promise<RuntimeHealth> {
     return this.request("/api/story-runtime/v1/health", HealthResponseSchema);
+  }
+
+  async assertCompatible(): Promise<void> {
+    if (!this.compatibilityCheck) {
+      this.compatibilityCheck = this.performCompatibilityCheck().catch((error: unknown) => {
+        this.compatibilityCheck = undefined;
+        throw error;
+      });
+    }
+    await this.compatibilityCheck;
+  }
+
+  private async performCompatibilityCheck(): Promise<void> {
+    const health = await this.health();
+    if (health.runtime_version !== STORY_RUNTIME_VERSION) {
+      throw new StoryRuntimeClientError(
+        `Story Runtime version mismatch: expected ${STORY_RUNTIME_VERSION}, received ${health.runtime_version}`,
+        "http_error", undefined, 502, "VERSION_MISMATCH",
+      );
+    }
+    if (!health.schema_versions.includes(STORY_RUNTIME_SCHEMA_VERSION)) {
+      throw new StoryRuntimeClientError(
+        `Story Runtime schema mismatch: expected ${STORY_RUNTIME_SCHEMA_VERSION}`,
+        "http_error", undefined, 502, "VERSION_MISMATCH",
+      );
+    }
+    if (health.database === "locked") {
+      throw new StoryRuntimeClientError("Story Runtime database is locked", "http_error", undefined, 423, "DATABASE_LOCKED");
+    }
+    if (health.status !== "ok" || health.database !== "ready") {
+      throw new StoryRuntimeClientError(
+        `Story Runtime is not ready: status=${health.status}, database=${health.database}`,
+        "http_error", undefined, 503, "RUNTIME_UNAVAILABLE",
+      );
+    }
   }
 
   projectStatus(projectId: string): Promise<RuntimeProjectStatus> {
@@ -279,6 +317,7 @@ export class StoryRuntimeClient {
         project_id: input.projectId,
         schema_version: STORY_RUNTIME_SCHEMA_VERSION,
         chapter_number: input.chapterNumber,
+        expected_revision: input.expectedRevision ?? null,
         intent: input.intent,
         entity_ids: input.entityIds ?? [],
         budget: { max_tokens: input.maxTokens, max_items: input.maxItems },

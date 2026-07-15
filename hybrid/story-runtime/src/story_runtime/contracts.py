@@ -252,6 +252,7 @@ class QueryContextRequest(StrictModel):
     project_id: str = Field(min_length=1, max_length=128)
     schema_version: Literal[SCHEMA_VERSION]
     chapter_number: int = Field(ge=1)
+    expected_revision: int | None = Field(default=None, ge=0)
     intent: str = Field(min_length=1, max_length=10_000)
     entity_ids: list[str] = Field(default_factory=list)
     budget: QueryBudget

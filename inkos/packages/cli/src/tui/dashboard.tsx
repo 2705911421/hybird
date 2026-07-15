@@ -8,6 +8,7 @@ import { processTuiAgentInput } from "./agent-input.js";
 import { describeActivityState } from "./activity-state.js";
 import { resolveComposerCaretState } from "./composer-caret.js";
 import { resolveChatDepthProfile, type ChatDepth } from "./chat-depth.js";
+import { renderProjectTuiChapterCommand } from "./chapter-surface.js";
 import { appendStreamingAssistantChunk, createOptimisticUserMessageSession } from "./chat-draft.js";
 import { renderComposerDisplay } from "./composer-display.js";
 import { renderMarkdown } from "./markdown.js";
@@ -345,6 +346,20 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
         return;
       }
 
+      if (input === "/chapters" || input === "/stats" || input === "/export" || input === "/retry"
+        || /^\/chapter\s+\d+$/.test(input) || /^\/search\s+.+$/.test(input)) {
+        setInputValue("");
+        const activeBookId = await resolveSessionActiveBook(props.projectRoot, session);
+        if (!activeBookId) throw new Error("No active book selected.");
+        const rendered = await renderProjectTuiChapterCommand(
+          props.projectRoot,
+          activeBookId,
+          input === "/retry" ? "/chapters" : input,
+        );
+        if (rendered) appendSystemNote(rendered);
+        return;
+      }
+
       const activeBookId = await resolveSessionActiveBook(props.projectRoot, session);
       const userTimestamp = Date.now();
       const assistantDraftTimestamp = userTimestamp + 1;
@@ -368,8 +383,18 @@ export function InkTuiApp(props: InkTuiAppProps): React.JSX.Element {
       setSession(result.session);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const failedSession = await loadProjectSession(props.projectRoot);
-      setSession(failedSession);
+      const chapterSurfaceCommand = input === "/chapters" || input === "/stats" || input === "/export" || input === "/retry"
+        || /^\/chapter\s+\d+$/.test(input) || /^\/search\s+.+$/.test(input);
+      if (chapterSurfaceCommand) {
+        setSession((current) => appendInteractionMessage(current, {
+          role: "system",
+          content: `Runtime unavailable: ${message}\nCurrent chapter data is hidden; export and writes are disabled. No local chapter fallback was used. Run /retry after Runtime recovers.`,
+          timestamp: Date.now(),
+        }));
+      } else {
+        const failedSession = await loadProjectSession(props.projectRoot);
+        setSession(failedSession);
+      }
       setLastError(message);
     } finally {
       assistantDraftTimestampRef.current = null;

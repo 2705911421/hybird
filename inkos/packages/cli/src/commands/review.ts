@@ -5,7 +5,6 @@ import { findProjectRoot, resolveBookId, loadConfig, log, logError } from "../ut
 
 async function runtimeReviewClient(root: string): Promise<RuntimeReviewClient> {
   const config = await loadConfig({ requireApiKey: false, projectRoot: root });
-  if (config.storyRuntime.mode !== "story-runtime") throw new Error("Legacy and shadow projects are read-only; migrate to Story Runtime first.");
   return new RuntimeReviewClient({
     baseUrl: config.storyRuntime.baseUrl, timeoutMs: config.storyRuntime.timeoutMs,
     apiToken: config.storyRuntime.apiTokenEnv ? process.env[config.storyRuntime.apiTokenEnv] : undefined,
