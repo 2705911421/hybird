@@ -47,3 +47,5 @@ pnpm --filter @actalk/inkos-studio test:e2e:rc1 -- --project=chromium
 ```
 
 clean commit `b95298f36c44f447ce5a5d7d10c46d97e8767935` 正式结果：TUI targeted 14/14 passed（34.85s，包含 build）；Playwright Chromium 13/13 passed（134.35s）。在发现 fresh checkout 需要显式 Core prebuild 后，clean commit `6df3c5e02931ba51f7970914a7d8ee61604fdaed` 又以 CI 完全相同的 package script 验证 13/13 passed（114.48s）。命令均 exit 0，fixture 临时目录已删除，工作树保持 clean。
+
+CI timeout recovery race 修复后，clean commit `d3f55fd290b7ff61abd554c19b4434785a9c0a70` 再次执行完整 Chromium 13/13 与 TUI interaction 13/13，共用 fixture 组合 exit 0，140.66s。产品 deadline 仍为 300ms；仅迟到 fixture response 在 750ms 清理 socket，不降低 fail-closed 标准。

@@ -70,6 +70,8 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 第二次默认分支 run [`29388771345`](https://github.com/2705911421/hybird/actions/runs/29388771345) 中 Windows、Ubuntu、macOS cross-platform jobs 已全部成功，证明路径修复有效；Chromium job 则在 fresh checkout 启动 Vite 时发现 Core `dist` 尚未构建，aggregate 再次正确失败。提交 `6df3c5e02931ba51f7970914a7d8ee61604fdaed` 为 `test:e2e:rc1` 增加显式 Core prebuild，并删除 workflow 的冗余 Playwright 参数。该 clean commit 上 CI 等价 package script 13/13 passed，exit 0，114.48s。下一次默认分支 run 仍须实际成功。
 
+第三次默认分支 run [`29389202699`](https://github.com/2705911421/hybird/actions/runs/29389202699) 的三 OS 与 specialized jobs 全绿；Chromium 12/13，timeout fault 恢复时 fixture 的永不结束 response 污染 CI HTTP 连接，10s 内没有呈现恢复数据，aggregate 再次失败。提交 `d3f55fd290b7ff61abd554c19b4434785a9c0a70` 仍让客户端在 300ms fail closed，但在 750ms 后结束迟到 fixture response，并在 UI Retry 前确认 Runtime health 恢复。该 clean commit 完整 Chromium 13/13 与 TUI 13/13 通过，组合 exit 0，140.66s。后续默认分支 run 仍须 actual success。
+
 ## 禁止项核对
 
 未修改历史 Runtime event/revision，未重写 Studio，未修改章节事务，未新增 authority mode，未恢复 shadow writing，未降低 Runtime unavailable fail-closed 标准，未开始 RC-2。
