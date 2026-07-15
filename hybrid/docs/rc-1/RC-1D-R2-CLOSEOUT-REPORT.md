@@ -68,6 +68,8 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 修复提交 `204461a3c0f58e36730d9b33b635698cf1bf023f` 将同样的 30 段 CJK long-path 语义改为 30 层短 component，并新增每个 component 不超过 255 bytes 的断言。该 clean commit 上定点 2/2、Runtime full 113/113、architecture、pip check 与 compileall 均 exit 0。下一次默认分支 run 尚待实际成功。
 
+第二次默认分支 run [`29388771345`](https://github.com/2705911421/hybird/actions/runs/29388771345) 中 Windows、Ubuntu、macOS cross-platform jobs 已全部成功，证明路径修复有效；Chromium job 则在 fresh checkout 启动 Vite 时发现 Core `dist` 尚未构建，aggregate 再次正确失败。提交 `6df3c5e02931ba51f7970914a7d8ee61604fdaed` 为 `test:e2e:rc1` 增加显式 Core prebuild，并删除 workflow 的冗余 Playwright 参数。该 clean commit 上 CI 等价 package script 13/13 passed，exit 0，114.48s。下一次默认分支 run 仍须实际成功。
+
 ## 禁止项核对
 
 未修改历史 Runtime event/revision，未重写 Studio，未修改章节事务，未新增 authority mode，未恢复 shadow writing，未降低 Runtime unavailable fail-closed 标准，未开始 RC-2。

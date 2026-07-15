@@ -51,3 +51,5 @@
 Run [`29388494342`](https://github.com/2705911421/hybird/actions/runs/29388494342) 证明 blocking 行为生效：Ubuntu `Story Runtime full suite` 因 Phase 7 long-path fixture 的单个 UTF-8 component 超过 Linux 255-byte 限制而失败，aggregate `RC-1 Required Gate` 同步失败。macOS job 已成功；失败不是 `continue-on-error` 或非阻断告警。
 
 提交 `204461a3c0f58e36730d9b33b635698cf1bf023f` 保留长路径覆盖，将一个 270-byte component 改为 30 层 9-byte CJK components，并新增跨平台 component-length 断言。clean commit 本地定点 2/2、Runtime 113/113 与 Python package/architecture gates 通过。后续 default-branch run 才能作为 F-002 的成功证据。
+
+Run [`29388771345`](https://github.com/2705911421/hybird/actions/runs/29388771345) 的 Windows、Ubuntu、macOS jobs 全绿，但 Chromium fresh checkout 在启动 Vite 前没有 Core build artifact，无法解析 Core export，aggregate 继续失败。提交 `6df3c5e02931ba51f7970914a7d8ee61604fdaed` 把 `pnpm --filter @actalk/inkos-core build` 设为 `test:e2e:rc1` 的 lifecycle precondition，并让 workflow 直接运行该固定 Chromium script。clean commit CI 等价命令 13/13 passed（114.48s）；仍需后续 default-branch run 终态 success。
