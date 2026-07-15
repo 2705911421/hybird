@@ -8,7 +8,7 @@
 | Finding | 状态 | 判据 |
 | --- | --- | --- |
 | F-001 | CLOSED | Runtime-authority Writer recent narrative、正文集合与 revision 均来自 Runtime；A-F red-team 与 architecture gate 保持通过。 |
-| F-002 | PARTIAL | 正式三 OS blocking workflow 与 release 依赖已提交到待验工作树；必须在 clean commit 和默认分支实际成功后才能关闭。 |
+| F-002 | PARTIAL | 正式三 OS blocking workflow 与 release 依赖已提交；clean commit 本地全回归通过，仍须默认分支实际 run 成功后关闭。 |
 | F-003 | CLOSED | Studio Chromium 13 个浏览器黑盒场景和 TUI 13 个交互场景覆盖 A-F、七类 fault 与恢复，无 local fallback。 |
 | F-004 | CLOSED | Runtime/legacy/importer mode-specific prompt 已修正并由 36 个 prompt 测试覆盖。 |
 
@@ -34,14 +34,31 @@ Legacy mode 保留了明确限于 legacy 项目的本地读取说明；importer 
 
 仓库当前 `master` branch protection API 返回 404（未保护）。代码不能替管理员启用 protection，因此不能宣称已经保护；管理员操作见 `RC-1-CI-GATE-REPORT.md`。这不改变 workflow 本身的 blocking 依赖，但合并保护仍需仓库管理员执行。
 
-## 回归证据状态
+## Clean-commit 回归证据
 
-dirty worktree 上的预检全部通过，但仅用于提交前排错，不作为最终放行证据：Runtime 113、Core 1572、CLI/TUI 219、Studio 503、Playwright 13，另有 architecture、typecheck、build 全部 exit 0。
+实现提交：`b95298f36c44f447ce5a5d7d10c46d97e8767935`。运行前后 `git status --short` 均为空；Playwright 生成的 `output/rc1-ui` 已删除。所有下表成功结果均直接来自该 clean commit，不使用 dirty-worktree 预检作为证据。
 
-正式证据将在实现提交后从 clean commit 重跑并回填：
+| Gate / command | Exit | Tests / checks | 实测耗时 |
+| --- | ---: | --- | ---: |
+| `python -m pytest -q` | 0 | Runtime 113 passed | 34.44s |
+| `pnpm --filter @actalk/inkos-core test` | 0 | 173 files / 1572 passed | 53.39s |
+| `pnpm --filter @actalk/inkos test` | 0 | 40 files / 219 passed | 167.50s |
+| `pnpm --filter @actalk/inkos-studio test` | 0 | 58 files / 503 passed | 75.10s |
+| `pnpm exec playwright test --config playwright.rc1.config.ts --project=chromium --reporter=line` | 0 | Chromium 13 passed | 134.35s |
+| `python hybrid/scripts/check_architecture.py` + `pip check` + `compileall` | 0 | 10 authority rules；no broken requirements | 4.23s |
+| `pnpm check:chapter-authority` | 0 | 439 modules / 319 edges / 24022 call sites | 3.03s |
+| `pnpm typecheck` | 0 | Core + Studio + CLI | 58.69s |
+| `pnpm build` | 0 | Core + Studio client/server + CLI | 73.52s |
+| Runtime chapter read/export targeted | 0 | 5 passed | 2.05s |
+| Core authority/Writer/prompt targeted | 0 | 7 files / 128 passed | 10.30s |
+| CLI A-F/API matrix targeted | 0 | 2 files / 49 passed | 138.42s |
+| Interactive TUI matrix targeted | 0 | 2 files / 14 passed | 34.85s |
+| Studio API/fail-closed targeted | 0 | 2 files / 136 passed | 13.09s |
 
-- clean implementation commit：`PENDING_CLEAN_COMMIT`
-- clean-commit local gate：`PENDING`
+首次 architecture 组合调用在错误工作目录下立即以 exit 2 报路径不存在，未运行测试；修正 cwd 后上表正式命令 exit 0。该操作错误不被计作通过证据，也未改变工作树。
+
+- clean implementation commit：`b95298f36c44f447ce5a5d7d10c46d97e8767935`
+- clean-commit local gate：`PASS`
 - default-branch GitHub Actions run：`PENDING`
 - final closeout commit：`PENDING`
 

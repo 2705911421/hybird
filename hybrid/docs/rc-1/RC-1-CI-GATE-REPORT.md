@@ -40,7 +40,7 @@
 | --- | --- |
 | YAML parse | PASS |
 | local preflight | PASS（不作为最终 release 证据） |
-| clean-commit local regression | PENDING |
+| clean-commit local regression | PASS：`b95298f36c44f447ce5a5d7d10c46d97e8767935`，全部 full/targeted/build gates exit 0 |
 | default-branch `RC-1 Required Gate` actual run | PENDING |
 | branch protection | NOT ENABLED；需管理员操作 |
 

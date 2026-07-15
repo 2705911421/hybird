@@ -46,4 +46,4 @@ pnpm --filter @actalk/inkos test -- tui-chapter-surface.test.ts tui-rc1-interact
 pnpm --filter @actalk/inkos-studio test:e2e:rc1 -- --project=chromium
 ```
 
-提交前预检：TUI targeted 14/14 passed；Playwright Chromium 13/13 passed。最终 clean-commit 结果由 closeout report 回填。
+clean commit `b95298f36c44f447ce5a5d7d10c46d97e8767935` 正式结果：TUI targeted 14/14 passed（34.85s，包含 build）；Playwright Chromium 13/13 passed（134.35s）。两条命令 exit 0，执行后 fixture 临时目录已删除，工作树仍 clean。
