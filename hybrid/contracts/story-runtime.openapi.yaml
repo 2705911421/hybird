@@ -1008,9 +1008,32 @@ components:
               replay_safe: { type: [boolean, "null"] }
               chain_health:
                 type: [string, "null"]
-                enum: [VALID, CORRUPTED, AFFECTED_BY_PRIOR_CORRUPTION, UNVERIFIABLE_UNKNOWN_VERSION, MISSING_PREDECESSOR, null]
+                enum: [VALID, CORRUPTED, DIRECTLY_CORRUPTED, MISSING_REVISION, MISSING_PREDECESSOR, AFFECTED_BY_MISSING_REVISION, AFFECTED_BY_PRIOR_CORRUPTION, UNVERIFIABLE_UNKNOWN_VERSION, ORPHAN_MANIFEST, null]
               chain_impact_start: { type: [integer, "null"], minimum: 0 }
               chain_impact_end: { type: [integer, "null"], minimum: 0 }
               latest_trusted_revision: { type: [integer, "null"], minimum: 0 }
               first_untrusted_revision: { type: [integer, "null"], minimum: 0 }
               total_affected_revisions: { type: [integer, "null"], minimum: 0 }
+              first_missing_revision: { type: [integer, "null"], minimum: 0 }
+              missing_revision_ranges:
+                type: [array, "null"]
+                items:
+                  type: array
+                  minItems: 2
+                  maxItems: 2
+                  items: { type: integer, minimum: 0 }
+              direct_corruption_revisions:
+                type: [array, "null"]
+                items: { type: integer, minimum: 0 }
+              downstream_affected_ranges:
+                type: [array, "null"]
+                items:
+                  type: array
+                  minItems: 2
+                  maxItems: 2
+                  items: { type: integer, minimum: 0 }
+              project_current_revision: { type: [integer, "null"], minimum: 0 }
+              latest_manifest_revision: { type: [integer, "null"], minimum: 0 }
+              chain_terminal_state:
+                type: [string, "null"]
+                enum: [VALID, DIRECTLY_CORRUPTED, MISSING_REVISION, MISSING_PREDECESSOR, AFFECTED_BY_MISSING_REVISION, AFFECTED_BY_PRIOR_CORRUPTION, UNVERIFIABLE_UNKNOWN_VERSION, ORPHAN_MANIFEST, null]

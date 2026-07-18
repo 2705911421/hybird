@@ -323,7 +323,7 @@ def test_doctor_propagates_first_chain_corruption_to_all_later_revisions(tmp_pat
     summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
 
     assert by_revision == {
-        1: "CORRUPTED",
+        1: "DIRECTLY_CORRUPTED",
         2: "AFFECTED_BY_PRIOR_CORRUPTION",
         3: "AFFECTED_BY_PRIOR_CORRUPTION",
     }
@@ -358,10 +358,10 @@ def test_doctor_reports_later_direct_corruption_without_duplicate_upstream_defec
     ]
 
     assert health == [
-        (1, "CORRUPTED"),
+        (1, "DIRECTLY_CORRUPTED"),
         (2, "AFFECTED_BY_PRIOR_CORRUPTION"),
         (3, "AFFECTED_BY_PRIOR_CORRUPTION"),
-        (4, "CORRUPTED"),
+        (4, "DIRECTLY_CORRUPTED"),
     ]
 
 
@@ -396,9 +396,196 @@ def test_doctor_marks_missing_predecessor_without_synthesizing_history(tmp_path)
     result = runtime.doctor("missing-predecessor", deep=True)
 
     assert any(
-        check.code == "MANIFEST_CHAIN_MISSING_PREDECESSOR"
+        check.code == "MANIFEST_CHAIN_MISSING_REVISION"
+        and check.revision == 1
+        and check.chain_health == "MISSING_REVISION"
+        for check in result.checks
+    )
+    assert any(
+        check.code == "MANIFEST_CHAIN_AFFECTED_BY_MISSING_REVISION"
         and check.revision == 2
-        and check.chain_health == "MISSING_PREDECESSOR"
+        and check.chain_health == "AFFECTED_BY_MISSING_REVISION"
         for check in result.checks
     )
     assert [item.revision for item in RevisionManifestRepository(database).list("missing-predecessor")] == [0, 2]
+
+
+def test_doctor_models_missing_revision_as_a_logical_node_and_propagates_gap_state(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "missing-logical-node")
+    for revision in range(4):
+        _typed_diff(database, "missing-logical-node", revision, f"typed-missing-logical-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("DROP TRIGGER project_revisions_immutable_delete")
+        conn.execute(
+            "DELETE FROM project_revisions WHERE project_id='missing-logical-node' AND revision=2"
+        )
+
+    result = runtime.doctor("missing-logical-node", deep=True)
+    states = {
+        check.revision: check.chain_health
+        for check in result.checks
+        if check.code in {
+            "MANIFEST_CHAIN_MISSING_REVISION",
+            "MANIFEST_CHAIN_AFFECTED_BY_MISSING_REVISION",
+        }
+    }
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+
+    assert states == {
+        2: "MISSING_REVISION",
+        3: "AFFECTED_BY_MISSING_REVISION",
+        4: "AFFECTED_BY_MISSING_REVISION",
+    }
+    assert summary.latest_trusted_revision == 1
+    assert summary.first_untrusted_revision == 2
+    assert summary.first_missing_revision == 2
+    assert summary.missing_revision_ranges == [[2, 2]]
+    assert summary.downstream_affected_ranges == [[3, 4]]
+    assert summary.total_affected_revisions == 3
+    assert summary.project_current_revision == 4
+    assert summary.latest_manifest_revision == 4
+    assert summary.chain_terminal_state == "AFFECTED_BY_MISSING_REVISION"
+
+
+def test_doctor_reports_multiple_missing_revision_ranges(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "multiple-gaps")
+    for revision in range(4):
+        _typed_diff(database, "multiple-gaps", revision, f"typed-multiple-gaps-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("DROP TRIGGER project_revisions_immutable_delete")
+        conn.execute(
+            "DELETE FROM project_revisions WHERE project_id='multiple-gaps' AND revision IN (1,3)"
+        )
+
+    result = runtime.doctor("multiple-gaps", deep=True)
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+    states = {
+        check.revision: check.chain_health for check in result.checks
+        if check.code.startswith("MANIFEST_CHAIN_") and check.code != "MANIFEST_CHAIN_IMPACT"
+    }
+
+    assert states[1] == "MISSING_REVISION"
+    assert states[2] == "AFFECTED_BY_MISSING_REVISION"
+    assert states[3] == "MISSING_REVISION"
+    assert states[4] == "AFFECTED_BY_MISSING_REVISION"
+    assert summary.missing_revision_ranges == [[1, 1], [3, 3]]
+    assert summary.first_missing_revision == 1
+
+
+def test_doctor_reports_missing_latest_revision_from_project_pointer(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "missing-latest")
+    for revision in range(4):
+        _typed_diff(database, "missing-latest", revision, f"typed-missing-latest-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("DROP TRIGGER project_revisions_immutable_delete")
+        conn.execute("DELETE FROM project_revisions WHERE project_id='missing-latest' AND revision=4")
+
+    result = runtime.doctor("missing-latest", deep=True)
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+
+    assert any(
+        check.revision == 4 and check.chain_health == "MISSING_REVISION"
+        for check in result.checks
+    )
+    assert summary.latest_trusted_revision == 3
+    assert summary.first_untrusted_revision == 4
+    assert summary.project_current_revision == 4
+    assert summary.latest_manifest_revision == 3
+
+
+def test_doctor_reports_manifest_ahead_of_project_as_orphan(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "project-behind")
+    for revision in range(4):
+        _typed_diff(database, "project-behind", revision, f"typed-project-behind-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("UPDATE projects SET revision=3 WHERE project_id='project-behind'")
+
+    result = runtime.doctor("project-behind", deep=True)
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+
+    assert any(
+        check.code == "MANIFEST_CHAIN_ORPHAN"
+        and check.revision == 4
+        and check.chain_health == "ORPHAN_MANIFEST"
+        for check in result.checks
+    )
+    assert summary.latest_trusted_revision == 3
+    assert summary.project_current_revision == 3
+    assert summary.latest_manifest_revision == 4
+    assert summary.chain_terminal_state == "ORPHAN_MANIFEST"
+
+
+def test_doctor_keeps_later_direct_corruption_distinct_after_gap(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "gap-then-corrupt")
+    for revision in range(4):
+        _typed_diff(database, "gap-then-corrupt", revision, f"typed-gap-corrupt-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("DROP TRIGGER project_revisions_immutable_delete")
+        conn.execute("DROP TRIGGER project_revisions_immutable_update")
+        conn.execute("DELETE FROM project_revisions WHERE project_id='gap-then-corrupt' AND revision=2")
+        conn.execute(
+            "UPDATE project_revisions SET command_id='domain.command:tampered' "
+            "WHERE project_id='gap-then-corrupt' AND revision=4"
+        )
+
+    result = runtime.doctor("gap-then-corrupt", deep=True)
+    states = {
+        check.revision: check.chain_health for check in result.checks
+        if check.code in {
+            "MANIFEST_CHAIN_MISSING_REVISION",
+            "MANIFEST_CHAIN_AFFECTED_BY_MISSING_REVISION",
+            "MANIFEST_CHAIN_CORRUPTED",
+        }
+    }
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+
+    assert states == {
+        2: "MISSING_REVISION",
+        3: "AFFECTED_BY_MISSING_REVISION",
+        4: "DIRECTLY_CORRUPTED",
+    }
+    assert summary.direct_corruption_revisions == [4]
+    assert summary.downstream_affected_ranges == [[3, 3]]
+
+
+def test_doctor_keeps_unknown_version_direct_and_unverifiable_after_gap(tmp_path) -> None:
+    database, runtime = _native_project(tmp_path, "gap-then-unknown")
+    for revision in range(4):
+        _typed_diff(database, "gap-then-unknown", revision, f"typed-gap-unknown-{revision:04d}")
+    with database.connect() as conn:
+        conn.execute("DROP TRIGGER project_revisions_immutable_delete")
+        conn.execute("DELETE FROM project_revisions WHERE project_id='gap-then-unknown' AND revision=2")
+    _rewrite_manifest(
+        database, "gap-then-unknown", 4,
+        manifest_schema_version="revision-manifest/v999",
+    )
+
+    result = runtime.doctor("gap-then-unknown", deep=True)
+    states = {
+        check.revision: check.chain_health for check in result.checks
+        if check.code in {
+            "MANIFEST_CHAIN_MISSING_REVISION",
+            "MANIFEST_CHAIN_AFFECTED_BY_MISSING_REVISION",
+            "MANIFEST_CHAIN_UNVERIFIABLE",
+        }
+    }
+    summary = next(check for check in result.checks if check.code == "MANIFEST_CHAIN_IMPACT")
+
+    assert states == {
+        2: "MISSING_REVISION",
+        3: "AFFECTED_BY_MISSING_REVISION",
+        4: "UNVERIFIABLE_UNKNOWN_VERSION",
+    }
+    assert summary.chain_terminal_state == "UNVERIFIABLE_UNKNOWN_VERSION"
+
+
+def test_doctor_marks_a_fully_verified_chain_valid(tmp_path) -> None:
+    _, runtime = _native_project(tmp_path, "valid-chain")
+
+    result = runtime.doctor("valid-chain", deep=True)
+    chain = next(check for check in result.checks if check.code == "manifest.chain")
+
+    assert chain.chain_health == "VALID"
+    assert chain.latest_trusted_revision == 0
+    assert chain.first_untrusted_revision is None
+    assert chain.chain_terminal_state == "VALID"

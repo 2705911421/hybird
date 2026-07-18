@@ -242,19 +242,212 @@ def _scan_revision_mutations(path: Path, symbol: str, node: ast.AST) -> None:
             )
 
 
-for path in files(RUNTIME, (".py",)):
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _call_name(node.value)
+        return f"{prefix}.{node.attr}" if prefix else node.attr
+    return None
+
+
+def _string_value(node: ast.AST, values: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return values.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _string_value(node.left, values)
+        right = _string_value(node.right, values)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                parts.append(part.value)
+            elif isinstance(part, ast.FormattedValue):
+                value = _string_value(part.value, values)
+                if value is None:
+                    return None
+                parts.append(value)
+            else:
+                return None
+        return "".join(parts)
+    return None
+
+
+def _contains_revision_key(node: ast.AST, values: dict[str, str]) -> bool:
+    value = _string_value(node, values)
+    if value is not None and value.lower() == "revision":
+        return True
+    if isinstance(node, ast.Dict):
+        return any(
+            key is not None and _string_value(key, values) == "revision"
+            for key in node.keys
+        )
+    return any(
+        isinstance(child, ast.keyword) and child.arg == "revision"
+        for child in ast.walk(node)
+    )
+
+
+def _local_values(node: ast.AST) -> dict[str, str]:
+    values: dict[str, str] = {}
+    assignments = [candidate for candidate in ast.walk(node) if isinstance(candidate, ast.Assign)]
+    for _ in range(len(assignments) + 1):
+        changed = False
+        for assignment in assignments:
+            value = _string_value(assignment.value, values)
+            if value is None:
+                continue
+            for target in assignment.targets:
+                if isinstance(target, ast.Name) and values.get(target.id) != value:
+                    values[target.id] = value
+                    changed = True
+        if not changed:
+            break
+    return values
+
+
+runtime_paths = files(RUNTIME, (".py",))
+module_trees: dict[Path, ast.Module] = {
+    path: ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path in runtime_paths
+}
+symbol_nodes: dict[str, tuple[Path, str, ast.AST]] = {}
+for path, tree in module_trees.items():
+    module = path.relative_to(RUNTIME).with_suffix("").as_posix().replace("/", ".")
     for symbol, node in _symbol_nodes(tree):
-        _scan_revision_mutations(path, symbol, node)
-    # Migration SQL/DDL is data in MIGRATIONS at module scope and is excluded.
-    # Any executable function added to migrations.py is still scanned above.
-    if path.name != "migrations.py":
-        module_nodes = [
-            node for node in tree.body
-            if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        for node in module_nodes:
-            _scan_revision_mutations(path, "<module>", node)
+        symbol_nodes[f"{module}:{symbol}"] = (path, symbol, node)
+
+symbols_by_tail: dict[str, set[str]] = {}
+for identity, (_, symbol, _) in symbol_nodes.items():
+    symbols_by_tail.setdefault(symbol.rsplit(".", 1)[-1], set()).add(identity)
+
+
+def _resolve_calls(identity: str, path: Path, symbol: str, node: ast.AST) -> set[str]:
+    module = identity.split(":", 1)[0]
+    class_name = symbol.rsplit(".", 1)[0] if "." in symbol else None
+    aliases: dict[str, str] = {}
+    tree = module_trees[path]
+    for candidate in tree.body:
+        if isinstance(candidate, ast.ImportFrom) and candidate.module:
+            for imported in candidate.names:
+                aliases[imported.asname or imported.name] = f"{candidate.module}:{imported.name}"
+    for assignment in (item for item in ast.walk(node) if isinstance(item, ast.Assign)):
+        callable_name = _call_name(assignment.value)
+        if callable_name:
+            for target in assignment.targets:
+                if isinstance(target, ast.Name):
+                    aliases[target.id] = aliases.get(callable_name, callable_name)
+
+    resolved: set[str] = set()
+    for call in (item for item in ast.walk(node) if isinstance(item, ast.Call)):
+        name = _call_name(call.func)
+        if not name:
+            continue
+        name = aliases.get(name, name)
+        candidates: set[str] = set()
+        if name.startswith("self.") and class_name:
+            candidates.add(f"{module}:{class_name}.{name.removeprefix('self.')}")
+        elif ":" in name:
+            candidates.add(name)
+        elif "." not in name:
+            candidates.add(f"{module}:{name}")
+            candidates.update(symbols_by_tail.get(name, set()))
+        else:
+            candidates.update(symbols_by_tail.get(name.rsplit(".", 1)[-1], set()))
+        resolved.update(candidate for candidate in candidates if candidate in symbol_nodes)
+    return resolved
+
+
+call_graph: dict[str, set[str]] = {
+    identity: _resolve_calls(identity, path, symbol, node)
+    for identity, (path, symbol, node) in symbol_nodes.items()
+}
+forbidden_sinks: dict[str, tuple[int, str]] = {}
+generic_mutators = {
+    "update_fields", "update_project_fields", "execute_update", "set_column",
+    "set_project_value", "set_project_revision", "update_revision", "write_revision",
+}
+for identity, (path, symbol, node) in symbol_nodes.items():
+    allowed = _REVISION_MUTATION_EXCEPTIONS.get((path.name, symbol), set())
+    values = _local_values(node)
+    for candidate in ast.walk(node):
+        if _revision_arithmetic(candidate) and "revision arithmetic" not in allowed:
+            forbidden_sinks.setdefault(identity, (candidate.lineno, "independent revision arithmetic"))
+        if isinstance(candidate, (ast.Constant, ast.JoinedStr, ast.BinOp, ast.Name)):
+            sql = _string_value(candidate, values)
+            if sql and _PROJECT_REVISION_SQL.search(sql) and "direct project revision SQL" not in allowed:
+                forbidden_sinks.setdefault(identity, (getattr(candidate, "lineno", 1), "direct project revision SQL"))
+        if not isinstance(candidate, ast.Call):
+            continue
+        name = _call_name(candidate.func) or ""
+        leaf = name.rsplit(".", 1)[-1]
+        revision_argument = any(_contains_revision_key(arg, values) for arg in candidate.args)
+        revision_argument = revision_argument or any(
+            keyword.arg == "revision" or _contains_revision_key(keyword.value, values)
+            for keyword in candidate.keywords
+        )
+        if (
+            leaf in generic_mutators
+            and ("revision" in leaf or revision_argument)
+            and identity not in {
+                "revision_manifests:ProjectRevisionAllocator.execute",
+                "revision_manifests:ProjectRevisionAllocator._ensure_lineage",
+            }
+        ):
+            forbidden_sinks.setdefault(
+                identity, (candidate.lineno, f"generic repository mutation via {leaf}")
+            )
+        if leaf == "values" and any(keyword.arg == "revision" for keyword in candidate.keywords):
+            forbidden_sinks.setdefault(identity, (candidate.lineno, "SQLAlchemy revision update"))
+
+
+def _display_symbol(identity: str) -> str:
+    path, symbol, _ = symbol_nodes[identity]
+    return f"{path.name}:{symbol}"
+
+
+def _public_symbol(identity: str) -> bool:
+    symbol = symbol_nodes[identity][1]
+    return not symbol.rsplit(".", 1)[-1].startswith("_")
+
+
+for entrypoint in sorted(symbol_nodes):
+    if not _public_symbol(entrypoint):
+        continue
+    stack: list[tuple[str, list[str]]] = [(entrypoint, [entrypoint])]
+    while stack:
+        current, path_chain = stack.pop()
+        if current in forbidden_sinks:
+            sink_path, _, _ = symbol_nodes[current]
+            line, reason = forbidden_sinks[current]
+            fail(
+                "G12_SINGLE_REVISION_ALLOCATOR",
+                sink_path,
+                f"line {line}, entrypoint/call path "
+                + " -> ".join(_display_symbol(item) for item in path_chain)
+                + f" -> forbidden revision write sink ({reason})",
+            )
+            break
+        if len(path_chain) >= 8:
+            continue
+        for callee in call_graph.get(current, set()):
+            if callee not in path_chain:
+                stack.append((callee, [*path_chain, callee]))
+
+# Migration SQL/DDL is data in MIGRATIONS at module scope and is excluded. Any
+# executable module-level mutation outside migrations.py is still checked.
+for path, tree in module_trees.items():
+    if path.name == "migrations.py":
+        continue
+    module_nodes = [
+        node for node in tree.body
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for node in module_nodes:
+        _scan_revision_mutations(path, "<module>", node)
 if chapter_text.count("self.revision_allocator.execute(") != 2:
     fail("G13_AUTHORITY_WRITES_USE_ALLOCATOR", RUNTIME / "chapter_commits.py", "chapter and command seams must both allocate")
 for name in ("reviews.py", "outbox.py", "operations.py", "observability.py", "services.py"):

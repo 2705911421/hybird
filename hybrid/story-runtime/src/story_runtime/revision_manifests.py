@@ -263,6 +263,13 @@ class ManifestIntegrityIssue:
     latest_trusted_revision: int | None = None
     first_untrusted_revision: int | None = None
     total_affected_revisions: int | None = None
+    first_missing_revision: int | None = None
+    missing_revision_ranges: tuple[tuple[int, int], ...] = ()
+    direct_corruption_revisions: tuple[int, ...] = ()
+    downstream_affected_ranges: tuple[tuple[int, int], ...] = ()
+    project_current_revision: int | None = None
+    latest_manifest_revision: int | None = None
+    chain_terminal_state: str | None = None
 
     def __iter__(self):
         # Preserve the original two-value iteration used by project status.
@@ -660,7 +667,7 @@ def manifest_integrity_issues(conn: Any, project_id: str) -> list[ManifestIntegr
         if previous is not None:
             if manifest.previous_revision != previous.revision:
                 issues.append(ManifestIntegrityIssue(f"manifest.previous_revision.{manifest.revision}", "manifest revision chain is not contiguous", manifest.revision, chain_health="MISSING_PREDECESSOR"))
-            if manifest.previous_manifest_hash != previous.manifest_hash:
+            elif manifest.previous_manifest_hash != previous.manifest_hash:
                 issues.append(ManifestIntegrityIssue(f"manifest.previous_hash.{manifest.revision}", "previous manifest hash mismatch", manifest.revision, chain_health="CORRUPTED"))
         if not all((manifest.event_schema_version, manifest.reducer_version,
                     manifest.manifest_schema_version, manifest.contract_version)):
@@ -680,6 +687,18 @@ def manifest_integrity_issues(conn: Any, project_id: str) -> list[ManifestIntegr
             issues.append(ManifestIntegrityIssue(f"manifest.event_missing.{manifest.revision}", "manifest references a missing event", manifest.revision, chain_health="CORRUPTED"))
         if loaded:
             sequences = [int(event["sequence"]) for event in loaded]
+            ordinals = [event["ordinal"] for event in loaded]
+            if (
+                sequences != sorted(sequences)
+                or any(ordinal is None for ordinal in ordinals)
+                or [int(ordinal) for ordinal in ordinals] != sorted(int(ordinal) for ordinal in ordinals)
+            ):
+                issues.append(ManifestIntegrityIssue(
+                    f"manifest.event_order.{manifest.revision}",
+                    "ordered event membership does not follow the committed command ordinal order",
+                    manifest.revision,
+                    chain_health="CORRUPTED",
+                ))
             if min(sequences) != manifest.first_event_sequence or max(sequences) != manifest.last_event_sequence:
                 issues.append(ManifestIntegrityIssue(f"manifest.event_range.{manifest.revision}", "event acceleration range does not match membership", manifest.revision, chain_health="CORRUPTED"))
             if not verification_stopped:
@@ -694,7 +713,11 @@ def manifest_integrity_issues(conn: Any, project_id: str) -> list[ManifestIntegr
             if reference.startswith("chapter:"):
                 commit_id = reference.removeprefix("chapter:")
                 artifact = conn.execute(
-                    "SELECT c.artifact_sha256,c.resulting_revision,c.state,a.schema_version FROM chapter_commits c "
+                    "SELECT c.artifact_sha256,c.resulting_revision,c.state,"
+                    "a.schema_version,a.chapter_number,a.title,a.body_text,a.summary,"
+                    "a.outline_fulfillment_json,a.review_json,a.state_mutation_proposal_json,"
+                    "a.evidence_spans_json,a.events_json,a.body_sha256,a.checksum "
+                    "FROM chapter_commits c "
                     "JOIN chapter_artifacts a USING(commit_id) WHERE c.project_id=? AND c.commit_id=?",
                     (project_id, commit_id),
                 ).fetchone()
@@ -703,6 +726,37 @@ def manifest_integrity_issues(conn: Any, project_id: str) -> list[ManifestIntegr
                 else:
                     if not verification_stopped and _tagged_hash(artifact["artifact_sha256"]) != digest:
                         issues.append(ManifestIntegrityIssue(f"manifest.artifact_hash.{manifest.revision}", "chapter artifact is missing or hash-mismatched", manifest.revision, chain_health="CORRUPTED"))
+                    artifact_payload = {
+                        "chapter_number": int(artifact["chapter_number"]),
+                        "title": artifact["title"],
+                        "body": artifact["body_text"],
+                        "body_sha256": artifact["body_sha256"],
+                        "events": json.loads(artifact["events_json"]),
+                        "outline_fulfillment": json.loads(artifact["outline_fulfillment_json"]),
+                        "summary": artifact["summary"],
+                        "state_mutation_proposal": json.loads(artifact["state_mutation_proposal_json"]),
+                        "evidence_spans": json.loads(artifact["evidence_spans_json"]),
+                    }
+                    review = json.loads(artifact["review_json"])
+                    payload_candidates = [artifact_payload, {**artifact_payload, "review": review}]
+                    actual_hashes = {
+                        hashlib.sha256(json.dumps(
+                            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")).hexdigest()
+                        for payload in payload_candidates
+                    }
+                    if (
+                        hashlib.sha256(artifact["body_text"].encode("utf-8")).hexdigest()
+                        != artifact["body_sha256"]
+                        or artifact["checksum"] not in actual_hashes
+                        or artifact["artifact_sha256"] not in actual_hashes
+                    ):
+                        issues.append(ManifestIntegrityIssue(
+                            f"manifest.artifact_content_hash.{manifest.revision}",
+                            "stored chapter artifact content does not match its immutable checksum",
+                            manifest.revision,
+                            chain_health="CORRUPTED",
+                        ))
                     artifact_policy = KNOWN_REVISION_COMPATIBILITY["artifact_schema_version"]
                     if artifact["schema_version"] not in artifact_policy.supported_values:
                         issues.append(ManifestIntegrityIssue(
@@ -961,46 +1015,132 @@ def manifest_integrity_issues(conn: Any, project_id: str) -> list[ManifestIntegr
         current = direct_health.get(issue.revision)
         if current is None or priority[issue.chain_health] > priority[current]:
             direct_health[issue.revision] = issue.chain_health
-    if direct_health:
-        first_untrusted = min(direct_health)
+
+    def ranges(values: list[int]) -> tuple[tuple[int, int], ...]:
+        if not values:
+            return ()
+        grouped: list[tuple[int, int]] = []
+        start = previous_value = values[0]
+        for value in values[1:]:
+            if value != previous_value + 1:
+                grouped.append((start, previous_value))
+                start = value
+            previous_value = value
+        grouped.append((start, previous_value))
+        return tuple(grouped)
+
+    project_revision = int(project["revision"])
+    latest_manifest_revision = latest.revision
+    manifest_by_revision = {manifest.revision: manifest for manifest in manifests}
+    missing_revisions: list[int] = []
+    for predecessor, successor in zip(manifests, manifests[1:]):
+        missing_revisions.extend(range(predecessor.revision + 1, successor.revision))
+    if project_revision > latest_manifest_revision:
+        missing_revisions.extend(range(latest_manifest_revision + 1, project_revision + 1))
+    missing_revisions = sorted(set(missing_revisions))
+
+    # A non-contiguous row points across a real logical gap. The row is affected
+    # by that gap; it is not itself the missing node. Preserve MISSING_PREDECESSOR
+    # only for malformed pointers where all logical revision rows exist.
+    for revision in tuple(direct_health):
+        if direct_health[revision] == "MISSING_PREDECESSOR" and any(
+            missing < revision for missing in missing_revisions
+        ):
+            del direct_health[revision]
+
+    direct_health = {
+        revision: "DIRECTLY_CORRUPTED" if health == "CORRUPTED" else health
+        for revision, health in direct_health.items()
+    }
+    orphan_revisions = sorted(
+        revision for revision in manifest_by_revision if revision > project_revision
+    )
+    for revision in orphan_revisions:
+        issues.append(ManifestIntegrityIssue(
+            "MANIFEST_ORPHAN",
+            f"manifest revision {revision} is ahead of project current revision {project_revision}",
+            revision,
+            severity="critical",
+            chain_health="ORPHAN_MANIFEST",
+        ))
+
+    roots = sorted(set(missing_revisions) | set(direct_health) | set(orphan_revisions))
+    if roots:
+        first_untrusted = roots[0]
+        impact_end = max(project_revision, latest_manifest_revision)
         latest_trusted = next(
-            (manifest.revision for manifest in reversed(manifests) if manifest.revision < first_untrusted),
+            (manifest.revision for manifest in reversed(manifests)
+             if manifest.revision < first_untrusted),
             None,
         )
-        affected = [manifest for manifest in manifests if manifest.revision >= first_untrusted]
-        for manifest in affected:
-            health = direct_health.get(manifest.revision, "AFFECTED_BY_PRIOR_CORRUPTION")
-            code = {
-                "CORRUPTED": "MANIFEST_CHAIN_CORRUPTED",
-                "UNVERIFIABLE_UNKNOWN_VERSION": "MANIFEST_CHAIN_UNVERIFIABLE",
-                "MISSING_PREDECESSOR": "MANIFEST_CHAIN_MISSING_PREDECESSOR",
-                "AFFECTED_BY_PRIOR_CORRUPTION": "MANIFEST_CHAIN_AFFECTED",
-            }[health]
-            message = (
-                f"revision {manifest.revision} is directly {health.lower()}"
-                if manifest.revision in direct_health
-                else (f"revision {manifest.revision} is affected by prior corruption at "
-                      f"revision {first_untrusted}")
-            )
+        states: dict[int, str] = {}
+        last_cause: str | None = None
+        for revision in range(first_untrusted, impact_end + 1):
+            if revision in missing_revisions:
+                state = "MISSING_REVISION"
+                last_cause = "missing"
+            elif revision in direct_health:
+                state = direct_health[revision]
+                last_cause = "unknown" if state == "UNVERIFIABLE_UNKNOWN_VERSION" else "corruption"
+            elif revision in orphan_revisions:
+                state = "ORPHAN_MANIFEST"
+            elif revision in manifest_by_revision:
+                state = (
+                    "AFFECTED_BY_MISSING_REVISION"
+                    if last_cause == "missing"
+                    else "AFFECTED_BY_PRIOR_CORRUPTION"
+                )
+            else:
+                continue
+            states[revision] = state
+
+        codes = {
+            "DIRECTLY_CORRUPTED": "MANIFEST_CHAIN_CORRUPTED",
+            "UNVERIFIABLE_UNKNOWN_VERSION": "MANIFEST_CHAIN_UNVERIFIABLE",
+            "MISSING_PREDECESSOR": "MANIFEST_CHAIN_MISSING_PREDECESSOR",
+            "MISSING_REVISION": "MANIFEST_CHAIN_MISSING_REVISION",
+            "AFFECTED_BY_MISSING_REVISION": "MANIFEST_CHAIN_AFFECTED_BY_MISSING_REVISION",
+            "AFFECTED_BY_PRIOR_CORRUPTION": "MANIFEST_CHAIN_AFFECTED",
+            "ORPHAN_MANIFEST": "MANIFEST_CHAIN_ORPHAN",
+        }
+        direct_states = {
+            "DIRECTLY_CORRUPTED", "UNVERIFIABLE_UNKNOWN_VERSION",
+            "MISSING_PREDECESSOR", "MISSING_REVISION", "ORPHAN_MANIFEST",
+        }
+        for revision, health in states.items():
             issues.append(ManifestIntegrityIssue(
-                code,
-                message,
-                manifest.revision,
-                severity="critical" if manifest.revision in direct_health else "error",
+                codes[health],
+                (f"revision {revision} is {health.lower()}"
+                 if health in direct_states
+                 else f"revision {revision} is {health.lower()} after revision {first_untrusted}"),
+                revision,
+                severity="critical" if health in direct_states else "error",
                 chain_health=health,
             ))
-        impact_end = affected[-1].revision
+        downstream = sorted(
+            revision for revision, state in states.items() if state.startswith("AFFECTED_BY_")
+        )
+        direct_corruptions = tuple(
+            revision for revision, state in states.items() if state == "DIRECTLY_CORRUPTED"
+        )
         issues.append(ManifestIntegrityIssue(
             "MANIFEST_CHAIN_IMPACT",
             f"manifest trust chain is untrusted for revisions {first_untrusted}..{impact_end}; "
             "restore exact immutable authority from a verified backup and do not synthesize history",
             first_untrusted,
             severity="critical",
-            chain_health=direct_health[first_untrusted],
+            chain_health=states[impact_end],
             chain_impact_start=first_untrusted,
             chain_impact_end=impact_end,
             latest_trusted_revision=latest_trusted,
             first_untrusted_revision=first_untrusted,
-            total_affected_revisions=len(affected),
+            total_affected_revisions=len(states),
+            first_missing_revision=missing_revisions[0] if missing_revisions else None,
+            missing_revision_ranges=ranges(missing_revisions),
+            direct_corruption_revisions=direct_corruptions,
+            downstream_affected_ranges=ranges(downstream),
+            project_current_revision=project_revision,
+            latest_manifest_revision=latest_manifest_revision,
+            chain_terminal_state=states[impact_end],
         ))
     return issues

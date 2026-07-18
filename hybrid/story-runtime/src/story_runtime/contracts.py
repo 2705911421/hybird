@@ -371,14 +371,26 @@ class DoctorCheck(StrictModel):
     verification_stopped: bool = False
     replay_safe: bool | None = None
     chain_health: Literal[
-        "VALID", "CORRUPTED", "AFFECTED_BY_PRIOR_CORRUPTION",
-        "UNVERIFIABLE_UNKNOWN_VERSION", "MISSING_PREDECESSOR",
+        "VALID", "CORRUPTED", "DIRECTLY_CORRUPTED", "MISSING_REVISION", "MISSING_PREDECESSOR",
+        "AFFECTED_BY_MISSING_REVISION", "AFFECTED_BY_PRIOR_CORRUPTION",
+        "UNVERIFIABLE_UNKNOWN_VERSION", "ORPHAN_MANIFEST",
     ] | None = None
     chain_impact_start: int | None = Field(default=None, ge=0)
     chain_impact_end: int | None = Field(default=None, ge=0)
     latest_trusted_revision: int | None = Field(default=None, ge=0)
     first_untrusted_revision: int | None = Field(default=None, ge=0)
     total_affected_revisions: int | None = Field(default=None, ge=0)
+    first_missing_revision: int | None = Field(default=None, ge=0)
+    missing_revision_ranges: list[list[int]] | None = None
+    direct_corruption_revisions: list[int] | None = None
+    downstream_affected_ranges: list[list[int]] | None = None
+    project_current_revision: int | None = Field(default=None, ge=0)
+    latest_manifest_revision: int | None = Field(default=None, ge=0)
+    chain_terminal_state: Literal[
+        "VALID", "DIRECTLY_CORRUPTED", "MISSING_REVISION", "MISSING_PREDECESSOR",
+        "AFFECTED_BY_MISSING_REVISION", "AFFECTED_BY_PRIOR_CORRUPTION",
+        "UNVERIFIABLE_UNKNOWN_VERSION", "ORPHAN_MANIFEST",
+    ] | None = None
 
 
 class DoctorResult(StrictModel):

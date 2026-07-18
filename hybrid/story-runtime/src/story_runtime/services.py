@@ -208,6 +208,11 @@ class RuntimeServices:
             checks.append(DoctorCheck(
                 code="manifest.chain", status="pass",
                 message="project revision manifest chain and current pointer are consistent", repair=None,
+                chain_health="VALID",
+                latest_trusted_revision=int(project["revision"]),
+                project_current_revision=int(project["revision"]),
+                latest_manifest_revision=int(project["revision"]),
+                chain_terminal_state="VALID",
             ))
         else:
             for issue in manifest_issues:
@@ -231,6 +236,13 @@ class RuntimeServices:
                     latest_trusted_revision=issue.latest_trusted_revision,
                     first_untrusted_revision=issue.first_untrusted_revision,
                     total_affected_revisions=issue.total_affected_revisions,
+                    first_missing_revision=issue.first_missing_revision,
+                    missing_revision_ranges=[list(item) for item in issue.missing_revision_ranges] or None,
+                    direct_corruption_revisions=list(issue.direct_corruption_revisions) or None,
+                    downstream_affected_ranges=[list(item) for item in issue.downstream_affected_ranges] or None,
+                    project_current_revision=issue.project_current_revision,
+                    latest_manifest_revision=issue.latest_manifest_revision,
+                    chain_terminal_state=issue.chain_terminal_state,
                 ))
         projection = self.repository.projection_health(project_id)
         if projection["status"] == "ready":
