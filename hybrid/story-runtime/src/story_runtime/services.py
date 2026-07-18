@@ -210,12 +210,27 @@ class RuntimeServices:
                 message="project revision manifest chain and current pointer are consistent", repair=None,
             ))
         else:
-            for code, message in manifest_issues:
+            for issue in manifest_issues:
+                code, message = issue
                 is_legacy_boundary = code == "manifest.bootstrap_required"
                 checks.append(DoctorCheck(
                     code=code, status="warning" if is_legacy_boundary else "fail", message=message,
                     repair=("establish one explicit bootstrap boundary before Runtime authority writes"
                             if is_legacy_boundary else "restore exact immutable authority from a verified backup; do not synthesize manifests"),
+                    project_id=project_id,
+                    revision=issue.revision,
+                    field=issue.field,
+                    observed_value=issue.observed_value,
+                    supported_values=list(issue.supported_values) or None,
+                    severity=issue.severity,
+                    verification_stopped=issue.verification_stopped,
+                    replay_safe=issue.replay_safe,
+                    chain_health=issue.chain_health,
+                    chain_impact_start=issue.chain_impact_start,
+                    chain_impact_end=issue.chain_impact_end,
+                    latest_trusted_revision=issue.latest_trusted_revision,
+                    first_untrusted_revision=issue.first_untrusted_revision,
+                    total_affected_revisions=issue.total_affected_revisions,
                 ))
         projection = self.repository.projection_health(project_id)
         if projection["status"] == "ready":

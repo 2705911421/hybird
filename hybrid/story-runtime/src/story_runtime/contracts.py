@@ -362,6 +362,23 @@ class DoctorCheck(StrictModel):
     repair: str | None
     retryable: bool = False
     requires_confirmation: bool = False
+    project_id: str | None = None
+    revision: int | None = Field(default=None, ge=0)
+    field: str | None = None
+    observed_value: str | None = None
+    supported_values: list[str] | None = None
+    severity: Literal["info", "warning", "error", "critical"] | None = None
+    verification_stopped: bool = False
+    replay_safe: bool | None = None
+    chain_health: Literal[
+        "VALID", "CORRUPTED", "AFFECTED_BY_PRIOR_CORRUPTION",
+        "UNVERIFIABLE_UNKNOWN_VERSION", "MISSING_PREDECESSOR",
+    ] | None = None
+    chain_impact_start: int | None = Field(default=None, ge=0)
+    chain_impact_end: int | None = Field(default=None, ge=0)
+    latest_trusted_revision: int | None = Field(default=None, ge=0)
+    first_untrusted_revision: int | None = Field(default=None, ge=0)
+    total_affected_revisions: int | None = Field(default=None, ge=0)
 
 
 class DoctorResult(StrictModel):

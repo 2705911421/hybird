@@ -8,18 +8,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INKOS = ROOT / "inkos" / "packages"
-RUNTIME = ROOT / "hybrid" / "story-runtime" / "src" / "story_runtime"
+RUNTIME = Path(os.environ.get(
+    "HYBRID_ARCH_RUNTIME_ROOT",
+    ROOT / "hybrid" / "story-runtime" / "src" / "story_runtime",
+)).resolve()
 failures: list[str] = []
 
 
 def fail(rule: str, path: Path, detail: str) -> None:
-    failures.append(f"{rule}: {path.relative_to(ROOT)}: {detail}")
+    try:
+        display = path.relative_to(ROOT)
+    except ValueError:
+        display = path
+    failures.append(f"{rule}: {display}: {detail}")
 
 
 def files(root: Path, suffixes: tuple[str, ...]) -> list[Path]:
     found: list[Path] = []
     for current, dirs, names in os.walk(root):
-        dirs[:] = [name for name in dirs if name not in {"node_modules", "dist", ".git", "coverage"}]
+        dirs[:] = [name for name in dirs if name not in {
+            "node_modules", "dist", ".git", "coverage", "__pycache__",
+            "tests", "fixtures", "generated", "vendor",
+        }]
         found.extend(Path(current) / name for name in names if Path(name).suffix in suffixes)
     return found
 
@@ -146,12 +156,105 @@ api_text = (RUNTIME / "api.py").read_text(encoding="utf-8")
 
 if "class ProjectRevisionAllocator" not in allocator_text or "class RevisionManifestRepository" not in allocator_text:
     fail("G12_SINGLE_REVISION_ALLOCATOR", allocator_path, "allocator/repository interface missing")
+
+# Every production Python file is scanned by default. Exceptions are exact
+# symbols, never files or directories. The migration symbols establish a
+# current-state-only legacy boundary in an import/replay database; ADR-RC2-007
+# explicitly forbids interpreting those writes as native historical revisions.
+_REVISION_MUTATION_EXCEPTIONS: dict[tuple[str, str], set[str]] = {
+    ("revision_manifests.py", "ProjectRevisionAllocator.execute"): {
+        "direct project revision SQL", "revision arithmetic",
+    },
+    ("revision_manifests.py", "ProjectRevisionAllocator._ensure_lineage"): {
+        "direct project revision SQL",
+    },
+    ("migration_jobs.py", "LegacyMigrationService._import_cir"): {
+        "direct project revision SQL",
+    },
+    ("migration_jobs.py", "LegacyMigrationService._replay_cir_hash"): {
+        "direct project revision SQL",
+    },
+}
+_PROJECT_REVISION_SQL = re.compile(
+    r"UPDATE\s+(?:[A-Za-z_]\w*\.)?projects(?:\s+(?:AS\s+)?[A-Za-z_]\w*)?\s+"
+    r"SET\s+(?:(?!\bWHERE\b)[\s\S])*?\brevision\s*=",
+    re.I,
+)
+
+
+def _symbol_nodes(tree: ast.AST) -> list[tuple[str, ast.AST]]:
+    found: list[tuple[str, ast.AST]] = []
+
+    def visit(body: list[ast.stmt], prefix: str = "") -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, f"{prefix}{node.name}.")
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.append((f"{prefix}{node.name}", node))
+
+    visit(getattr(tree, "body", []))
+    return found
+
+
+def _is_one(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value == 1
+
+
+def _revision_target(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Name) and node.id == "revision"
+        or isinstance(node, ast.Attribute) and node.attr == "revision"
+    )
+
+
+def _revision_arithmetic(node: ast.AST) -> bool:
+    if isinstance(node, ast.AugAssign):
+        return _revision_target(node.target) and isinstance(node.op, ast.Add) and _is_one(node.value)
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = node.value
+        if any(isinstance(target, ast.Attribute) and target.attr == "revision" for target in targets):
+            return True
+        return (
+            isinstance(value, ast.BinOp)
+            and isinstance(value.op, ast.Add)
+            and (_is_one(value.left) or _is_one(value.right))
+            and any(_revision_target(target) for target in targets)
+        )
+    return False
+
+
+def _scan_revision_mutations(path: Path, symbol: str, node: ast.AST) -> None:
+    allowed = _REVISION_MUTATION_EXCEPTIONS.get((path.name, symbol), set())
+    for candidate in ast.walk(node):
+        if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+            if _PROJECT_REVISION_SQL.search(candidate.value) and "direct project revision SQL" not in allowed:
+                fail(
+                    "G12_SINGLE_REVISION_ALLOCATOR", path,
+                    f"line {candidate.lineno}, call path production-root -> {path.name}:{symbol} "
+                    "-> direct project revision SQL",
+                )
+        if _revision_arithmetic(candidate) and "revision arithmetic" not in allowed:
+            fail(
+                "G12_SINGLE_REVISION_ALLOCATOR", path,
+                f"line {candidate.lineno}, call path production-root -> {path.name}:{symbol} "
+                "-> independent revision arithmetic",
+            )
+
+
 for path in files(RUNTIME, (".py",)):
-    text = path.read_text(encoding="utf-8")
-    if path.name not in {"revision_manifests.py", "migration_jobs.py"} and re.search(r"UPDATE\s+projects\s+SET\s+revision", text, re.I):
-        fail("G12_SINGLE_REVISION_ALLOCATOR", path, "direct project revision update")
-    if path.name != "revision_manifests.py" and re.search(r"expected_revision\s*\+\s*1|revision\s*\+=\s*1", text):
-        fail("G12_SINGLE_REVISION_ALLOCATOR", path, "independent revision arithmetic")
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for symbol, node in _symbol_nodes(tree):
+        _scan_revision_mutations(path, symbol, node)
+    # Migration SQL/DDL is data in MIGRATIONS at module scope and is excluded.
+    # Any executable function added to migrations.py is still scanned above.
+    if path.name != "migrations.py":
+        module_nodes = [
+            node for node in tree.body
+            if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        for node in module_nodes:
+            _scan_revision_mutations(path, "<module>", node)
 if chapter_text.count("self.revision_allocator.execute(") != 2:
     fail("G13_AUTHORITY_WRITES_USE_ALLOCATOR", RUNTIME / "chapter_commits.py", "chapter and command seams must both allocate")
 for name in ("reviews.py", "outbox.py", "operations.py", "observability.py", "services.py"):
@@ -163,7 +266,10 @@ for token in ("project_revisions_immutable_update", "project_revisions_immutable
     if token not in migrations_text:
         fail("G15_MANIFEST_IMMUTABLE", RUNTIME / "migrations.py", token)
 manifest_schema = migrations_text[migrations_text.index("CREATE TABLE project_revisions"):migrations_text.index("CREATE UNIQUE INDEX project_revisions_commit_idx")]
-for token in ("body_text", "payload_json", "state_mutation_proposal_json"):
+for token in (
+    "body", "body_text", "content", "full_state", "event_payload", "payload_json",
+    "review_text", "entities", "facts", "timeline", "threads", "state_mutation_proposal_json",
+):
     if token in manifest_schema:
         fail("G16_MANIFEST_NOT_STATE_OR_PAYLOAD", RUNTIME / "migrations.py", token)
 if "revision += 1" in migration_jobs_text or "applied_revision,aggregate_type" not in migration_jobs_text or "SCHEMA_VERSION, now, None" not in migration_jobs_text:

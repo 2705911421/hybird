@@ -994,3 +994,23 @@ components:
               repair: { type: [string, "null"] }
               retryable: { type: boolean }
               requires_confirmation: { type: boolean }
+              project_id: { type: [string, "null"] }
+              revision: { type: [integer, "null"], minimum: 0 }
+              field: { type: [string, "null"] }
+              observed_value: { type: [string, "null"] }
+              supported_values:
+                type: [array, "null"]
+                items: { type: string }
+              severity:
+                type: [string, "null"]
+                enum: [info, warning, error, critical, null]
+              verification_stopped: { type: boolean }
+              replay_safe: { type: [boolean, "null"] }
+              chain_health:
+                type: [string, "null"]
+                enum: [VALID, CORRUPTED, AFFECTED_BY_PRIOR_CORRUPTION, UNVERIFIABLE_UNKNOWN_VERSION, MISSING_PREDECESSOR, null]
+              chain_impact_start: { type: [integer, "null"], minimum: 0 }
+              chain_impact_end: { type: [integer, "null"], minimum: 0 }
+              latest_trusted_revision: { type: [integer, "null"], minimum: 0 }
+              first_untrusted_revision: { type: [integer, "null"], minimum: 0 }
+              total_affected_revisions: { type: [integer, "null"], minimum: 0 }
